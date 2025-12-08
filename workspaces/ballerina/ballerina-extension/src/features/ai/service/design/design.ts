@@ -22,19 +22,20 @@ import { CopilotEventHandler, createWebviewEventHandler } from "../event";
 import { AIPanelAbortController } from "../../../../rpc-managers/ai-panel/utils";
 import { createTaskWriteTool, TASK_WRITE_TOOL_NAME, TaskWriteResult } from "../libs/task_write_tool";
 import { createDiagnosticsTool, DIAGNOSTICS_TOOL_NAME } from "../libs/diagnostics_tool";
-import { getProjectSource } from "../../../../rpc-managers/ai-panel/rpc-manager";
+import { checkCompilationErrors } from "../libs/diagnostics_utils";
 import { createBatchEditTool, createEditExecute, createEditTool, createMultiEditExecute, createReadExecute, createReadTool, createWriteExecute, createWriteTool, FILE_BATCH_EDIT_TOOL_NAME, FILE_READ_TOOL_NAME, FILE_SINGLE_EDIT_TOOL_NAME, FILE_WRITE_TOOL_NAME } from "../libs/text_editor_tool";
 import { getLibraryProviderTool } from "../libs/libraryProviderTool";
 import { GenerationType, getAllLibraries, LIBRARY_PROVIDER_TOOL } from "../libs/libs";
 import { Library } from "../libs/libs_types";
 import { AIChatStateMachine } from "../../../../views/ai-panel/aiChatMachine";
-import { getTempProject, FileModificationInfo } from "../../utils/temp-project-utils";
+import { getTempProject as createTempProjectOfWorkspace, cleanupTempProject } from "../../utils/project-utils";
 import { formatCodebaseStructure, integrateCodeToWorkspace } from "./utils";
 import { getSystemPrompt, getUserPrompt } from "./prompts";
 import { createConnectorGeneratorTool, CONNECTOR_GENERATOR_TOOL } from "../libs/connectorGeneratorTool";
 import { LangfuseExporter } from 'langfuse-vercel';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { getProjectSource } from "../../utils/project-utils";
 
 const LANGFUSE_SECRET = process.env.LANGFUSE_SECRET;
 const LANGFUSE_PUBLIC = process.env.LANGFUSE_PUBLIC;
@@ -50,20 +51,26 @@ const sdk = new NodeSDK({
 });
 sdk.start();
 
-//TODO: Tool name, types and uesd in both ext and visualizer to display, either move to core or use visualizer as view only.
-export async function generateDesignCore(params: GenerateAgentCodeRequest, eventHandler: CopilotEventHandler): Promise<void> {
+// TODO: Tool name, types and used in both ext and visualizer to display, either move to core or use visualizer as view only.
+
+export async function generateDesignCore(
+    params: GenerateAgentCodeRequest,
+    eventHandler: CopilotEventHandler
+): Promise<string> {
     const isPlanModeEnabled = params.isPlanMode;
     const messageId = params.messageId;
-    const project: ProjectSource = await getProjectSource(params.operationType);
-    const historyMessages = populateHistoryForAgent(params.chatHistory);
-    const hasHistory = historyMessages.length > 0;
-    const { path: tempProjectPath } = await getTempProject(project, hasHistory);
-    const cacheOptions = await getProviderCacheControl();
 
+    const tempProjectPath = (await createTempProjectOfWorkspace()).path;
+    const shouldCleanup = !process.env.AI_TEST_ENV;
+
+    const projects: ProjectSource[] = await getProjectSource(params.operationType); // TODO: Fix multi project
+    const historyMessages = populateHistoryForAgent(params.chatHistory);
+
+    const cacheOptions = await getProviderCacheControl();
 
     const modifiedFiles: string[] = [];
 
-    const userMessageContent = getUserPrompt(params.usecase, hasHistory, tempProjectPath, project.projectName, isPlanModeEnabled, params.codeContext);
+    const userMessageContent = getUserPrompt(params.usecase, tempProjectPath, projects, isPlanModeEnabled, params.codeContext);
     const allMessages: ModelMessage[] = [
         {
             role: "system",
@@ -86,7 +93,7 @@ export async function generateDesignCore(params: GenerateAgentCodeRequest, event
     const tools = {
         [TASK_WRITE_TOOL_NAME]: createTaskWriteTool(eventHandler, tempProjectPath, modifiedFiles),
         [LIBRARY_PROVIDER_TOOL]: getLibraryProviderTool(libraryDescriptions, GenerationType.CODE_GENERATION),
-        [CONNECTOR_GENERATOR_TOOL]: createConnectorGeneratorTool(eventHandler, tempProjectPath, project.projectName, modifiedFiles),
+        [CONNECTOR_GENERATOR_TOOL]: createConnectorGeneratorTool(eventHandler, tempProjectPath, projects[0].projectName, modifiedFiles),
         [FILE_WRITE_TOOL_NAME]: createWriteTool(createWriteExecute(tempProjectPath, modifiedFiles)),
         [FILE_SINGLE_EDIT_TOOL_NAME]: createEditTool(createEditExecute(tempProjectPath, modifiedFiles)),
         [FILE_BATCH_EDIT_TOOL_NAME]: createBatchEditTool(createMultiEditExecute(tempProjectPath, modifiedFiles)),
@@ -210,8 +217,11 @@ export async function generateDesignCore(params: GenerateAgentCodeRequest, event
             case "error": {
                 const error = part.error;
                 console.error("[Design] Error:", error);
+                if (shouldCleanup) {
+                    cleanupTempProject(tempProjectPath);
+                }
                 eventHandler({ type: "error", content: getErrorMessage(error) });
-                break;
+                return tempProjectPath;
             }
             case "text-start": {
                 eventHandler({ type: "content_block", content: " \n" });
@@ -241,12 +251,16 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
 </abort_notification>`,
                 });
 
+                if (shouldCleanup) {
+                    cleanupTempProject(tempProjectPath);
+                }
+
                 updateAndSaveChat(messageId, userMessageContent, messagesToSave, eventHandler);
                 eventHandler({ type: "abort", command: Command.Design });
                 AIChatStateMachine.sendEvent({
                     type: AIChatMachineEventType.FINISH_EXECUTION,
                 });
-                break;
+                return tempProjectPath;
             }
             case "text-start": {
                 currentAssistantContent.push({ type: "text", text: "" });
@@ -254,25 +268,24 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
                 break;
             }
             case "finish": {
-                const finishReason = part.finishReason;
                 const finalResponse = await response;
                 const assistantMessages = finalResponse.messages || [];
 
-                console.log(`[Design] Finished with reason: ${finishReason}`);
+                const finalDiagnostics = await checkCompilationErrors(tempProjectPath);
+                if (finalDiagnostics.diagnostics && finalDiagnostics.diagnostics.length > 0) {
+                    eventHandler({
+                        type: "diagnostics",
+                        diagnostics: finalDiagnostics.diagnostics
+                    });
+                }
 
-                // Auto-apply changes to workspace when plan mode is disabled
-                if (!isPlanModeEnabled && tempProjectPath && modifiedFiles.length > 0) {
+                if (!process.env.AI_TEST_ENV && modifiedFiles.length > 0) {
                     const modifiedFilesSet = new Set(modifiedFiles);
-                    console.log(`[Design] Auto-integrating ${modifiedFilesSet.size} modified file(s) to workspace`);
                     await integrateCodeToWorkspace(tempProjectPath, modifiedFilesSet);
                 }
 
-                // Fallback integration: integrate any remaining modified files that weren't integrated via TaskWrite in plan mode
-                if (isPlanModeEnabled && modifiedFiles.length > 0) {
-                    const modifiedFilesSet = new Set(modifiedFiles);
-                    await integrateCodeToWorkspace(tempProjectPath, modifiedFilesSet);
-                    console.log(`[Design] Successfully integrated files on stream completion`);
-                    modifiedFiles.length = 0;
+                if (shouldCleanup) {
+                    cleanupTempProject(tempProjectPath);
                 }
 
                 updateAndSaveChat(messageId, userMessageContent, assistantMessages, eventHandler);
@@ -281,10 +294,12 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
                     type: AIChatMachineEventType.FINISH_EXECUTION,
                 });
                 await langfuseExporter.forceFlush();
-                break;
+                return tempProjectPath;
             }
         }
         }
+
+    return tempProjectPath;
 }
 
 /**
