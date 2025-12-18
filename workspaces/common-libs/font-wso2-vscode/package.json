@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "gen-icons": "node src/generate-font/generate-font.js && node src/searchableInput/addSearch.js",
-    "build": "npm run gen-icons && node src/searchableInput/addSearch.js && npm run copy-icons",
+    "build": "echo Skipping font generation for font-wso2-vscode",
     "copy-icons": "node src/plugin-icons/configurePlugins.js",
     "start": "open dist/wso2-vscode.html"
   },

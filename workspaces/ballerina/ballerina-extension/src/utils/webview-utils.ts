@@ -21,7 +21,7 @@ import { join, sep } from "path";
 import { extension } from "../BalExtensionContext";
 
 export const RESOURCES_CDN = `https://choreo-shared-codeserver-cdne.azureedge.net/ballerina-low-code-resources@${process.env.BALLERINA_LOW_CODE_RESOURCES_VERSION}`;
-const isDevMode = process.env.WEB_VIEW_WATCH_MODE === "true";
+const isDevMode = false;
 
 function getWebViewResourceRoot(): string {
     return join((extension.ballerinaExtInstance.context as ExtensionContext).extensionPath,

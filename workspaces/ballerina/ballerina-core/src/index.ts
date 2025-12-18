@@ -115,6 +115,9 @@ export * from "./icons"
 // ------ AI Panel Related Interfaces -------->
 export * from "./interfaces/ai-panel";
 
+// ------ Memory Layer Types -------->
+//export * from "./memory/types";
+
 // ------ Flow Model Utils -------->
 export * from "./flow-model/BaseVisitor";
 export * from "./flow-model/flow-model-utils";

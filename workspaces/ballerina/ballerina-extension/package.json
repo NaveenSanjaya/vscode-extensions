@@ -1211,7 +1211,8 @@
         "download-ls:prerelease": "node scripts/download-ls.js --prerelease --replace",
         "build": "pnpm run compile && pnpm run lint && pnpm run postbuild",
         "rebuild": "pnpm run clean && pnpm run compile && pnpm run postbuild",
-        "postbuild": "if [ \"$isPreRelease\" = \"true\" ]; then pnpm run download-ls --prerelease; else pnpm run download-ls; fi && pnpm run copyFonts && pnpm run copyJSLibs && pnpm run package && pnpm run copyVSIX",
+        "postbuild": "pnpm run download-ls-conditional && pnpm run copyFonts && pnpm run copyJSLibs && pnpm run package && pnpm run copyVSIX",
+        "download-ls-conditional": "node -e \"const isPreRelease = process.env.isPreRelease === 'true'; const { execSync } = require('child_process'); execSync(isPreRelease ? 'pnpm run download-ls:prerelease' : 'pnpm run download-ls', { stdio: 'inherit' });\"",
         "copyJSLibs": "copyfiles -f ../ballerina-visualizer/build/*.js resources/jslibs && copyfiles -f ../trace-visualizer/build/*.js resources/jslibs"
     },
     "dependencies": {

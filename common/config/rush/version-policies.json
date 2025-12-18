@@ -109,5 +109,35 @@
     "definitionName": "lockStepVersion",
     "version": "1.0.0",
     "nextBump": "prerelease"
+  },
+  {
+    "policyName": "font-wso2-vscode",
+    "definitionName": "lockStepVersion",
+    "version": "1.0.0",
+    "nextBump": "prerelease"
+  },
+  {
+    "policyName": "ui-toolkit",
+    "definitionName": "lockStepVersion",
+    "version": "1.0.0",
+    "nextBump": "prerelease"
+  },
+  {
+    "policyName": "service-designer",
+    "definitionName": "lockStepVersion",
+    "version": "1.0.0",
+    "nextBump": "prerelease"
+  },
+  {
+    "policyName": "wso2-platform-extension",
+    "definitionName": "lockStepVersion",
+    "version": "1.0.0",
+    "nextBump": "prerelease"
+  },
+  {
+    "policyName": "api-designer-extension",
+    "definitionName": "lockStepVersion",
+    "version": "1.0.0",
+    "nextBump": "prerelease"
   }
 ]
