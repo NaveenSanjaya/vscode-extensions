@@ -89,12 +89,7 @@ import { getOnboardingOpens, incrementOnboardingOpens, convertToUIMessages, isCo
 import FeedbackBar from "./../FeedbackBar";
 import { useFeedback } from "./utils/useFeedback";
 import { SegmentType, splitContent } from "./segment";
-
-enum CodeGenerationType {
-    CODE_FOR_USER_REQUIREMENT = "CODE_FOR_USER_REQUIREMENT",
-    TESTS_FOR_USER_REQUIREMENT = "TESTS_FOR_USER_REQUIREMENT",
-    CODE_GENERATION = "CODE_GENERATION",
-}
+import ReviewActions from "../ReviewActions";
 
 // var projectUuid = "";
 // var chatLocation = "";
@@ -105,6 +100,33 @@ const UPDATE_CHAT_SUMMARY_FAILED = `Failed to update the chat summary.`;
 
 const GENERATE_CODE_AGAINST_THE_PROVIDED_REQUIREMENTS = "Generate code based on the following requirements: ";
 const GENERATE_CODE_AGAINST_THE_PROVIDED_REQUIREMENTS_TRIMMED = GENERATE_CODE_AGAINST_THE_PROVIDED_REQUIREMENTS.trim();
+
+/**
+ * Formats a file path into a user-friendly display name
+ * - Removes .bal extension
+ * - Replaces _ and - with spaces
+ * - Preserves directory structure for context (e.g., "tests/")
+ */
+function formatFileNameForDisplay(filePath: string): string {
+    // Remove .bal extension
+    let displayName = filePath.replace(/\.bal$/, '');
+
+    // Extract directory and filename
+    const lastSlashIndex = displayName.lastIndexOf('/');
+    if (lastSlashIndex !== -1) {
+        const directory = displayName.substring(0, lastSlashIndex + 1);
+        const fileName = displayName.substring(lastSlashIndex + 1);
+
+        // Replace _ and - with spaces in the filename only
+        const formattedFileName = fileName.replace(/[_-]/g, ' ');
+        displayName = directory + formattedFileName;
+    } else {
+        // No directory, just format the filename
+        displayName = displayName.replace(/[_-]/g, ' ');
+    }
+
+    return displayName;
+}
 
 //TODO: Add better error handling from backend. stream error type and non 200 status codes
 
@@ -130,7 +152,8 @@ const AIChat: React.FC = () => {
     const [aiChatStateMachineState, setAiChatStateMachineState] = useState<AIChatMachineStateValue>("Idle");
     const [isAutoApproveEnabled, setIsAutoApproveEnabled] = useState(false);
     const [isPlanModeEnabled, setIsPlanModeEnabled] = useState(false);
-    const [isExperimentalEnabled, setIsExperimentalEnabled] = useState(false);
+    const [isPlanModeFeatureEnabled, setIsPlanModeFeatureEnabled] = useState(false);
+    const [showReviewActions, setShowReviewActions] = useState(false);
 
     const [approvalRequest, setApprovalRequest] = useState<Omit<TaskApprovalRequest, "type"> | null>(null);
 
@@ -139,8 +162,6 @@ const AIChat: React.FC = () => {
 
     //TODO: Need a better way of storing data related to last generation to be in the repair state.
     const currentDiagnosticsRef = useRef<DiagnosticEntry[]>([]);
-    const [isRepairMode, setIsRepairMode] = useState(false);
-    const [errorCount, setErrorCount] = useState(0);
     const functionsRef = useRef<any>([]);
     const lastAttatchmentsRef = useRef<any>([]);
     const aiChatInputRef = useRef<AIChatInputRef>(null);
@@ -239,6 +260,9 @@ const AIChat: React.FC = () => {
                 if (context && context.autoApproveEnabled !== undefined) {
                     setIsAutoApproveEnabled(context.autoApproveEnabled);
                 }
+                if (context && context.showReviewActions !== undefined) {
+                    setShowReviewActions(context.showReviewActions);
+                }
             } catch (error) {
                 console.error("[AIChat] Failed to initialize auto-approve state:", error);
             }
@@ -248,17 +272,17 @@ const AIChat: React.FC = () => {
     }, [rpcClient]);
 
     useEffect(() => {
-        const checkExperimentalEnabled = async () => {
+        const checkPlanModeFeatureEnabled = async () => {
             try {
-                const enabled = await rpcClient.getCommonRpcClient().experimentalEnabled();
-                setIsExperimentalEnabled(enabled);
+                const enabled = await rpcClient.getAiPanelRpcClient().isPlanModeFeatureEnabled();
+                setIsPlanModeFeatureEnabled(enabled);
             } catch (error) {
-                console.error("[AIChat] Failed to check experimental enabled status:", error);
-                setIsExperimentalEnabled(false);
+                console.error("[AIChat] Failed to check plan mode feature enabled status:", error);
+                setIsPlanModeFeatureEnabled(false);
             }
         };
 
-        checkExperimentalEnabled();
+        checkPlanModeFeatureEnabled();
     }, [rpcClient]);
 
     /**
@@ -281,8 +305,18 @@ const AIChat: React.FC = () => {
         loadHistory();
     }, [rpcClient]);
 
-    rpcClient?.onAIChatStateChanged((newState: AIChatMachineStateValue) => {
+    rpcClient?.onAIChatStateChanged(async (newState: AIChatMachineStateValue) => {
         setAiChatStateMachineState(newState);
+        
+        // Update context when state changes
+        try {
+            const context = await rpcClient.getAIChatContext();
+            if (context && context.showReviewActions !== undefined) {
+                setShowReviewActions(context.showReviewActions);
+            }
+        } catch (error) {
+            console.error("[AIChat] Failed to update review actions state:", error);
+        }
     });
 
     rpcClient?.onCheckpointCaptured((payload: { messageId: string; checkpointId: string }) => {
@@ -328,6 +362,14 @@ const AIChat: React.FC = () => {
                     }
                     return newMessages;
                 });
+            } else if (response.toolName == "HealthcareLibraryProviderTool") {
+                setMessages((prevMessages) => {
+                    const newMessages = [...prevMessages];
+                    if (newMessages.length > 0) {
+                        newMessages[newMessages.length - 1].content += `\n\n<toolcall>Analyzing request & selecting healthcare libraries...</toolcall>`;
+                    }
+                    return newMessages;
+                });
             } else if (response.toolName === "task_write") {
                 setMessages((prevMessages) => {
                     const newMessages = [...prevMessages];
@@ -338,15 +380,10 @@ const AIChat: React.FC = () => {
                 });
             } else if (["file_write", "file_edit", "file_batch_edit"].includes(response.toolName)) {
                 const fileName = response.toolInput?.fileName || "file";
-                let message: string;
-
-                if (isRepairMode && errorCount > 0) {
-                    message = `Repairing ${fileName}...`;
-                } else if (response.toolName === "file_write") {
-                    message = `Creating ${fileName}...`;
-                } else {
-                    message = `Editing ${fileName}...`;
-                }
+                const displayName = formatFileNameForDisplay(fileName);
+                const message = response.toolName === "file_write"
+                    ? `Creating ${displayName}...`
+                    : `Updating ${displayName}...`;
 
                 setMessages((prevMessages) => {
                     const newMessages = [...prevMessages];
@@ -375,14 +412,37 @@ const AIChat: React.FC = () => {
                                 newMessages.length - 1
                             ].content.replace(
                                 `<toolcall>Analyzing request & selecting libraries...</toolcall>`,
-                                `<toolcall>No relevant libraries found.</toolcall>`
+                                `<toolresult>No relevant libraries found.</toolresult>`
                             );
                         } else {
                             newMessages[newMessages.length - 1].content = newMessages[
                                 newMessages.length - 1
                             ].content.replace(
                                 `<toolcall>Analyzing request & selecting libraries...</toolcall>`,
-                                `<toolcall>Fetched libraries: [${libraryNames.join(", ")}]</toolcall>`
+                                `<toolresult>Fetched libraries: [${libraryNames.join(", ")}]</toolresult>`
+                            );
+                        }
+                    }
+                    return newMessages;
+                });
+            } else if (response.toolName == "HealthcareLibraryProviderTool") {
+                const libraryNames = response.toolOutput;
+                setMessages((prevMessages) => {
+                    const newMessages = [...prevMessages];
+                    if (newMessages.length > 0) {
+                        if (libraryNames.length === 0) {
+                            newMessages[newMessages.length - 1].content = newMessages[
+                                newMessages.length - 1
+                            ].content.replace(
+                                `<toolcall>Analyzing request & selecting healthcare libraries...</toolcall>`,
+                                `<toolresult>No relevant healthcare libraries found.</toolresult>`
+                            );
+                        } else {
+                            newMessages[newMessages.length - 1].content = newMessages[
+                                newMessages.length - 1
+                            ].content.replace(
+                                `<toolcall>Analyzing request & selecting healthcare libraries...</toolcall>`,
+                                `<toolresult>Fetched healthcare libraries: [${libraryNames.join(", ")}]</toolresult>`
                             );
                         }
                     }
@@ -453,28 +513,22 @@ const AIChat: React.FC = () => {
                     if (newMessages.length > 0) {
                         const lastMessageContent = newMessages[newMessages.length - 1].content;
                         const creatingPattern = /<toolcall>Creating (.+?)\.\.\.<\/toolcall>/;
-                        const editingPattern = /<toolcall>Editing (.+?)\.\.\.<\/toolcall>/;
-                        const repairingPattern = /<toolcall>Repairing (.+?)\.\.\.<\/toolcall>/;
+                        const updatingPattern = /<toolcall>Updating (.+?)\.\.\.<\/toolcall>/;
 
                         let updatedContent = lastMessageContent;
 
-                        if (repairingPattern.test(lastMessageContent)) {
-                            updatedContent = lastMessageContent.replace(
-                                repairingPattern,
-                                (_match, fileName) => `<toolcall>Repaired ${fileName}</toolcall>`
-                            );
-                        } else if (creatingPattern.test(lastMessageContent)) {
+                        if (creatingPattern.test(lastMessageContent)) {
                             // For file_write, check if it was an update or create
                             const action = response.toolOutput?.action;
                             const resultText = action === 'updated' ? 'Updated' : 'Created';
                             updatedContent = lastMessageContent.replace(
                                 creatingPattern,
-                                (_match, fileName) => `<toolcall>${resultText} ${fileName}</toolcall>`
+                                (_match, fileName) => `<toolresult>${resultText} ${fileName}</toolresult>`
                             );
-                        } else if (editingPattern.test(lastMessageContent)) {
+                        } else if (updatingPattern.test(lastMessageContent)) {
                             updatedContent = lastMessageContent.replace(
-                                editingPattern,
-                                (_match, fileName) => `<toolcall>Edited ${fileName}</toolcall>`
+                                updatingPattern,
+                                (_match, fileName) => `<toolresult>Updated ${fileName}</toolresult>`
                             );
                         }
 
@@ -488,28 +542,19 @@ const AIChat: React.FC = () => {
                 const errors = diagnosticsOutput?.diagnostics || [];
                 const errorCount = errors.length;
 
-                setErrorCount(errorCount);
-                if (errorCount > 0) {
-                    setIsRepairMode(true);
-                }
-
                 setMessages((prevMessages) => {
                     const newMessages = [...prevMessages];
                     if (newMessages.length > 0) {
                         const lastMessageContent = newMessages[newMessages.length - 1].content;
                         const checkingPattern = /<toolcall>Checking for errors\.\.\.<\/toolcall>/;
 
-                        let message: string;
-                        if (errorCount === 0) {
-                            message = "No errors found";
-                            setIsRepairMode(false);
-                        } else {
-                            message = `Found ${errorCount} error${errorCount > 1 ? 's' : ''}`;
-                        }
+                        const message = errorCount === 0
+                            ? "No errors found"
+                            : `Found ${errorCount} error${errorCount > 1 ? 's' : ''}`;
 
                         const updatedContent = lastMessageContent.replace(
                             checkingPattern,
-                            `<toolcall>${message}</toolcall>`
+                            `<toolresult>${message}</toolresult>`
                         );
 
                         newMessages[newMessages.length - 1].content = updatedContent;
@@ -616,8 +661,17 @@ const AIChat: React.FC = () => {
                 return newMessages;
             });
         } else if (type === "diagnostics") {
+            //TODO: Handle this in review mode
             const content = response.diagnostics;
             currentDiagnosticsRef.current = content;
+        } else if ((response as any).type === "review_actions") {
+            setMessages((prevMessages) => {
+                const newMessages = [...prevMessages];
+                if (newMessages.length > 0) {
+                    newMessages[newMessages.length - 1].content += `\n\n<reviewactions></reviewactions>`;
+                }
+                return newMessages;
+            });
         } else if (type === "messages") {
             const messages = response.messages;
             messagesRef.current = messages;
@@ -625,8 +679,6 @@ const AIChat: React.FC = () => {
             console.log("Received stop signal");
             setIsCodeLoading(false);
             setIsLoading(false);
-            setIsRepairMode(false);
-            setErrorCount(0);
         } else if (type === "abort") {
             console.log("Received abort signal");
             const interruptedMessage = "\n\n*[Request interrupted by user]*";
@@ -637,8 +689,6 @@ const AIChat: React.FC = () => {
             });
             setIsCodeLoading(false);
             setIsLoading(false);
-            setIsRepairMode(false);
-            setErrorCount(0);
         } else if (type === "save_chat") {
             console.log("Received save_chat signal");
             const messageId = response.messageId;
@@ -751,6 +801,11 @@ const AIChat: React.FC = () => {
         attachments: Attachment[];
         metadata?: Record<string, any>;
     }) {
+        // Hide review actions when a new prompt is submitted
+        if (showReviewActions) {
+            await rpcClient.getAiPanelRpcClient().hideReviewActions();
+        }
+        
         // Clear previous generation refs
         currentDiagnosticsRef.current = [];
         functionsRef.current = [];
@@ -838,40 +893,37 @@ const AIChat: React.FC = () => {
         if (parsedInput && "type" in parsedInput && parsedInput.type === "error") {
             throw new Error(parsedInput.message);
         } else if ("text" in parsedInput && !("command" in parsedInput)) {
-            await processDesignGeneration(parsedInput.text, inputText);
+            await processAgentGeneration(parsedInput.text, attachments);
         } else if ("command" in parsedInput) {
             switch (parsedInput.command) {
                 case Command.NaturalProgramming: {
                     let useCase = "";
                     switch (parsedInput.templateId) {
                         case "code-doc-drift-check":
-                            // await processLLMDiagnostics(attachments, inputText);
+                            await processLLMDiagnostics();
                             break;
                         case "generate-code-from-following-requirements":
-                            // await rpcClient.getAiPanelRpcClient().updateRequirementSpecification({
-                            //     filepath: chatLocation,
-                            //     content: parsedInput.placeholderValues.requirements,
-                            // });
-                            // setIsReqFileExists(true);
+                            await rpcClient.getAiPanelRpcClient().updateRequirementSpecification({
+                                content: parsedInput.placeholderValues.requirements
+                            });
+                            setIsReqFileExists(true);
 
-                            // useCase = parsedInput.placeholderValues.requirements;
-                            // await processCodeGeneration(
-                            //     [useCase, attachments, CodeGenerationType.CODE_FOR_USER_REQUIREMENT],
-                            //     inputText
-                            // );
+                            useCase = parsedInput.placeholderValues.requirements;
+                            await processAgentGeneration(
+                                useCase, attachments, "CODE_FOR_USER_REQUIREMENT"
+                            );
                             break;
                         case "generate-test-from-requirements":
-                            // rpcClient.getAiPanelRpcClient().createTestDirecoryIfNotExists(chatLocation);
+                            rpcClient.getAiPanelRpcClient().createTestDirecoryIfNotExists();
 
-                            // useCase = getTemplateTextById(
-                            //     commandTemplates,
-                            //     Command.NaturalProgramming,
-                            //     "generate-test-from-requirements"
-                            // );
-                            // await processCodeGeneration(
-                            //     [useCase, attachments, CodeGenerationType.TESTS_FOR_USER_REQUIREMENT],
-                            //     inputText
-                            // );
+                            useCase = getTemplateTextById(
+                                commandTemplates,
+                                Command.NaturalProgramming,
+                                "generate-test-from-requirements"
+                            );
+                            await processAgentGeneration(
+                                useCase, attachments, "TESTS_FOR_USER_REQUIREMENT"
+                            );
                             break;
                         case "generate-code-from-requirements":
                             useCase = getTemplateTextById(
@@ -879,28 +931,8 @@ const AIChat: React.FC = () => {
                                 Command.NaturalProgramming,
                                 "generate-code-from-requirements"
                             );
-                            await processCodeGeneration(
-                                [useCase, attachments, CodeGenerationType.CODE_FOR_USER_REQUIREMENT],
-                                inputText
-                            );
-                            break;
-                    }
-                    break;
-                }
-                case Command.Tests: {
-                    switch (parsedInput.templateId) {
-                        case "tests-for-service":
-                            await processTestGeneration(
-                                [inputText, attachments],
-                                "service",
-                                parsedInput.placeholderValues.servicename
-                            );
-                            break;
-                        case "tests-for-function":
-                            await processTestGeneration(
-                                [inputText, attachments],
-                                "function",
-                                parsedInput.placeholderValues.methodPath
+                            await processAgentGeneration(
+                                useCase, attachments, "CODE_FOR_USER_REQUIREMENT"
                             );
                             break;
                     }
@@ -959,14 +991,14 @@ const AIChat: React.FC = () => {
                     }
                     break;
                 }
-                case Command.Healthcare: {
-                    switch (parsedInput.templateId) {
-                        case TemplateId.Wildcard:
-                            await processHealthcareCodeGeneration(parsedInput.text, inputText);
-                            break;
-                    }
-                    break;
-                }
+                // case Command.Healthcare: {
+                //     switch (parsedInput.templateId) {
+                //         case TemplateId.Wildcard:
+                //             await processHealthcareCodeGeneration(parsedInput.text, inputText);
+                //             break;
+                //     }
+                //     break;
+                // }
                 case Command.Ask: {
                     switch (parsedInput.templateId) {
                         case TemplateId.Wildcard:
@@ -995,24 +1027,6 @@ const AIChat: React.FC = () => {
         }
     }
 
-    async function processCodeGeneration(content: [string, Attachment[], OperationType], message: string) {
-        const [useCase, attachments, operationType] = content;
-        const fileAttatchments = attachments.map((file) => ({
-            fileName: file.name,
-            content: file.content,
-        }));
-
-        const requestBody: GenerateCodeRequest = {
-            usecase: useCase,
-            chatHistory: [],
-            operationType,
-            fileAttachmentContents: fileAttatchments,
-            codeContext: codeContext,
-        };
-
-        await rpcClient.getAiPanelRpcClient().generateCode(requestBody);
-    }
-
     const handleAddAllCodeSegmentsToWorkspace = async (
         codeSegments: any,
         setIsCodeAdded: React.Dispatch<React.SetStateAction<boolean>>,
@@ -1020,6 +1034,16 @@ const AIChat: React.FC = () => {
         filePaths?: SourceFile[]
     ) => {
         console.log("Add to integration called. Command: ", command);
+        const fileChanges: FileChanges[] = [];
+        for (let { segmentText, filePath } of codeSegments) {
+            fileChanges.push({
+                filePath: filePath,
+                content: segmentText,
+            });
+        }
+        await rpcClient.getAiPanelRpcClient().addFilesToProject({
+            fileChanges: fileChanges,
+        })
         setIsAddingToWorkspace(true);
     };
 
@@ -1031,37 +1055,6 @@ const AIChat: React.FC = () => {
         console.log("Revert gration called. Command: ", command);
         setIsAddingToWorkspace(true);
     };
-
-    async function processTestGeneration(
-        content: [string, Attachment[]],
-        targetType: string, // service or function
-        target: string // <servicename> or <resourcemethod resourcepath>
-    ) {
-        let assistantResponse = "";
-        try {
-            const targetSource =
-                targetType === "service"
-                    ? await rpcClient.getAiPanelRpcClient().getServiceSourceForName(target)
-                    : await rpcClient.getAiPanelRpcClient().getResourceSourceForMethodAndPath(target);
-            const requestBody: TestPlanGenerationRequest = {
-                targetType: targetType === "service" ? TestGenerationTarget.Service : TestGenerationTarget.Function,
-                targetSource: targetSource,
-                target: target,
-            };
-
-            await rpcClient.getAiPanelRpcClient().generateTestPlan(requestBody);
-        } catch (error: any) {
-            setIsLoading(false);
-            const errorName = error instanceof Error ? error.name : "Unknown error";
-            const errorMessage = "message" in error ? error.message : "Unknown error";
-
-            if (errorName === "AbortError") {
-                throw new Error("Failed: The user cancelled the request.");
-            } else {
-                throw new Error(errorMessage);
-            }
-        }
-    }
 
     async function processUserDocGeneration(serviceName: string) {
         try {
@@ -1156,16 +1149,6 @@ const AIChat: React.FC = () => {
         }
     }
 
-    async function processHealthcareCodeGeneration(useCase: string, message: string) {
-        const requestBody: GenerateCodeRequest = {
-            usecase: useCase,
-            chatHistory: [],
-            fileAttachmentContents: [],
-            operationType: CodeGenerationType.CODE_GENERATION,
-        };
-        await rpcClient.getAiPanelRpcClient().generateHealthcareCode(requestBody);
-    }
-
     async function processOpenAPICodeGeneration(useCase: string, message: string) {
         const requestBody: any = {
             query: useCase,
@@ -1175,10 +1158,17 @@ const AIChat: React.FC = () => {
         await rpcClient.getAiPanelRpcClient().generateOpenAPI(requestBody);
     }
 
-    async function processDesignGeneration(useCase: string, message: string) {
+    async function processAgentGeneration(useCase: string, attachments: Attachment[], operationType?: OperationType) {
+        const fileAttatchments = attachments.map((file) => ({
+            fileName: file.name,
+            content: file.content,
+        }));
+
+        console.log("Submitting agent prompt:", { useCase, isPlanModeEnabled, codeContext, operationType, fileAttatchments });
+
         rpcClient.sendAIChatStateEvent({
-            type: AIChatMachineEventType.SUBMIT_DESIGN_PROMPT,
-            payload: { prompt: useCase, isPlanMode: isPlanModeEnabled, codeContext: codeContext }
+            type: AIChatMachineEventType.SUBMIT_AGENT_PROMPT,
+            payload: { prompt: useCase, isPlanMode: isPlanModeEnabled, codeContext: codeContext, operationType, fileAttachments: fileAttatchments }
         });
     }
 
@@ -1446,7 +1436,32 @@ const AIChat: React.FC = () => {
         setApprovalRequest(null);
     };
 
+    async function processLLMDiagnostics() {
+        let response: LLMDiagnostics = await rpcClient.getAiPanelRpcClient().getDriftDiagnosticContents();
 
+        const responseStatus = response.statusCode;
+        const invalidResponse = response == null || response.statusCode == null;
+
+        if (invalidResponse) {
+            throw new Error(DRIFT_CHECK_ERROR);
+        }
+
+        if (!(responseStatus >= 200 && responseStatus < 300)) {
+            throw new Error(DRIFT_CHECK_ERROR);
+        }
+
+        if (response.diags == null || response.diags == "") {
+            response.diags = NO_DRIFT_FOUND;
+        }
+
+        setIsLoading(false);
+
+        setMessages((prevMessages) => {
+            const newMessage = [...prevMessages];
+            newMessage[newMessage.length - 1].content = response.diags;
+            return newMessage;
+        });
+    }
     return (
         <>
             {!showSettings && (
@@ -1457,9 +1472,9 @@ const AIChat: React.FC = () => {
                             <br />
                             {/* <ResetsInBadge>{`Resets in: 30 days`}</ResetsInBadge> */}
                         </Badge>
-                        <div>State: {aiChatStateMachineState}</div>
+                        {isPlanModeFeatureEnabled && <div>State: {aiChatStateMachineState}</div>}
                         <HeaderButtons>
-                            {isExperimentalEnabled && (
+                            {isPlanModeFeatureEnabled && (
                                 <Button
                                     appearance="icon"
                                     onClick={handleTogglePlanMode}
@@ -1469,7 +1484,7 @@ const AIChat: React.FC = () => {
                                     &nbsp;&nbsp;{isPlanModeEnabled ? "Mode: Plan" : "Mode: Edit"}
                                 </Button>
                             )}
-                            {isExperimentalEnabled && (
+                            {isPlanModeFeatureEnabled && (
                                 <Button
                                     appearance="icon"
                                     onClick={handleToggleAutoApprove}
@@ -1504,9 +1519,14 @@ const AIChat: React.FC = () => {
                             const lastAssistantIndex = otherMessages.map((m) => m.role).lastIndexOf("Copilot");
                             const isLatestAssistantMessage = isAssistantMessage && index === lastAssistantIndex;
 
+                            // Note: Cannot use useMemo here as it's inside map() callback
+                            // The stateless regex implementation in splitContent() ensures no corruption during streaming
                             const segmentedContent = splitContent(message.content);
                             const areTestsGenerated = segmentedContent.some(
                                 (segment) => segment.type === SegmentType.Progress
+                            );
+                            const hasReviewActions = segmentedContent.some(
+                                (segment) => segment.type === SegmentType.ReviewActions
                             );
                             return (
                                 <ChatMessage key={index}>
@@ -1514,10 +1534,6 @@ const AIChat: React.FC = () => {
                                         <RoleContainer
                                             icon={message.role === "User" ? "bi-user" : "bi-ai-chat"}
                                             title={message.role}
-                                            showPreview={true}
-                                            isLoading={
-                                                isLoading && !isSuggestionLoading && index === otherMessages.length - 1
-                                            }
                                             checkpointButton={
                                                 message.role === "User" && message.checkpointId ? (
                                                     <CheckpointButton
@@ -1563,7 +1579,7 @@ const AIChat: React.FC = () => {
                                                 }
                                                 return (
                                                     <CodeSection
-                                                        key={i}
+                                                        key={`code-${i}`}
                                                         codeSegments={codeSegments}
                                                         loading={isLoading}
                                                         handleAddAllCodeSegmentsToWorkspace={
@@ -1591,6 +1607,7 @@ const AIChat: React.FC = () => {
                                         } else if (segment.type === SegmentType.Progress) {
                                             return (
                                                 <ProgressTextSegment
+                                                    key={`progress-${i}`}
                                                     text={segment.text}
                                                     loading={segment.loading}
                                                     failed={segment.failed}
@@ -1599,6 +1616,7 @@ const AIChat: React.FC = () => {
                                         } else if (segment.type === SegmentType.ToolCall) {
                                             return (
                                                 <ToolCallSegment
+                                                    key={`tool-call-${i}`}
                                                     text={segment.text}
                                                     loading={segment.loading}
                                                     failed={segment.failed}
@@ -1608,6 +1626,7 @@ const AIChat: React.FC = () => {
                                             const isLastMessage = index === otherMessages.length - 1;
                                             return (
                                                 <TodoSection
+                                                    key={`todo-${i}`}
                                                     tasks={segment.tasks || []}
                                                     message={segment.message}
                                                     isLoading={isLoading && isLastMessage}
@@ -1616,7 +1635,15 @@ const AIChat: React.FC = () => {
                                         } else if (segment.type === SegmentType.SpecFetcher) {
                                             return (
                                                 <ConnectorGeneratorSegment
+                                                    key={`connector-generator-${i}`}
                                                     data={segment.specData}
+                                                    rpcClient={rpcClient}
+                                                />
+                                            );
+                                        } else if (segment.type === SegmentType.ReviewActions) {
+                                            return (
+                                                <ReviewActions
+                                                    key={`review-actions-${i}`}
                                                     rpcClient={rpcClient}
                                                 />
                                             );
@@ -1625,7 +1652,7 @@ const AIChat: React.FC = () => {
                                                 <AttachmentsContainer>
                                                     {segment.text.split(",").map((fileName, index) => (
                                                         <AttachmentBox
-                                                            key={index}
+                                                            key={`attachment-${i}-${index}`}
                                                             status={AttachmentStatus.Success}
                                                             fileName={fileName.trim()}
                                                             index={index}
@@ -1639,6 +1666,7 @@ const AIChat: React.FC = () => {
                                             // return <BallerinaCodeBlock key={i} code={segment.text} />;
                                             return (
                                                 <CodeSegment
+                                                    key={`code-segment-${i}`}
                                                     source={segment.text}
                                                     fileName={"Ballerina"}
                                                     language={"ballerina"}
@@ -1647,10 +1675,11 @@ const AIChat: React.FC = () => {
                                                 />
                                             );
                                         } else if (segment.type === SegmentType.References) {
-                                            return <ReferenceDropdown key={i} links={JSON.parse(segment.text)} />;
+                                            return <ReferenceDropdown key={`references-${i}`} links={JSON.parse(segment.text)} />;
                                         } else if (segment.type === SegmentType.TestScenario) {
                                             return (
                                                 <AccordionItem
+                                                    key={`test-scenario-${i}`}
                                                     content={segment.text}
                                                     onDelete={onTestScenarioDelete}
                                                     isEnabled={
@@ -1673,6 +1702,7 @@ const AIChat: React.FC = () => {
                                             ) {
                                                 return (
                                                     <VSCodeButton
+                                                        key={`btn-${i}`}
                                                         title="Add a new test scenario"
                                                         appearance="secondary"
                                                         onClick={onTestScenarioAdd}
@@ -1689,7 +1719,7 @@ const AIChat: React.FC = () => {
                                                 isLoading
                                             ) {
                                                 return (
-                                                    <div style={{ display: "flex", gap: "10px" }}>
+                                                    <div key={`btn-group-${i}`} style={{ display: "flex", gap: "10px" }}>
                                                         <VSCodeButton
                                                             title="Generate Tests"
                                                             onClick={generateFunctionTests}
@@ -1713,7 +1743,7 @@ const AIChat: React.FC = () => {
                                                 !isLoading
                                             ) {
                                                 return (
-                                                    <div style={{ display: "flex", gap: "10px" }}>
+                                                    <div key={`btn-save-${i}`} style={{ display: "flex", gap: "10px" }}>
                                                         <VSCodeButton
                                                             title="Save Documentation"
                                                             onClick={saveDocumentation}
@@ -1734,20 +1764,20 @@ const AIChat: React.FC = () => {
                                                 segment.buttonType === "documentation_saved"
                                             ) {
                                                 return (
-                                                    <VSCodeButton title="Documentation has been saved" disabled>
+                                                    <VSCodeButton key={`btn-saved-${i}`} title="Documentation has been saved" disabled>
                                                         {"Saved"}
                                                     </VSCodeButton>
                                                 );
                                             }
                                         } else {
                                             if (message.type === "Error") {
-                                                return <ErrorBox key={i}>{segment.text}</ErrorBox>;
+                                                return <ErrorBox key={`error-${i}`}>{segment.text}</ErrorBox>;
                                             }
-                                            return <MarkdownRenderer key={i} markdownContent={segment.text} />;
+                                            return <MarkdownRenderer key={`markdown-${i}`} markdownContent={segment.text} />;
                                         }
                                     })}
-                                    {/* Show feedback bar only for the latest assistant message and when loading is complete */}
-                                    {isAssistantMessage && isLatestAssistantMessage && !isLoading && !isCodeLoading && (
+                                    {/* Show feedback bar only for the latest assistant message and when loading is complete, but not if review actions are present */}
+                                    {isAssistantMessage && isLatestAssistantMessage && !isLoading && !isCodeLoading && !hasReviewActions && (
                                         <FeedbackBar
                                             messageIndex={index}
                                             onFeedback={handleFeedback}
@@ -1759,6 +1789,12 @@ const AIChat: React.FC = () => {
                         })}
                         <div ref={messagesEndRef} />
                     </main>
+                    {/* Review Actions Component - positioned at bottom above input */}
+                    {showReviewActions && (
+                        <div style={{ padding: "10px 20px 0", borderTop: "1px solid var(--vscode-panel-border)" }}>
+                            <ReviewActions rpcClient={rpcClient} />
+                        </div>
+                    )}
                     {approvalRequest ? (
                         <ApprovalFooter
                             approvalType={approvalRequest.approvalType}
@@ -1796,3 +1832,5 @@ const AIChat: React.FC = () => {
 };
 
 export default AIChat;
+
+

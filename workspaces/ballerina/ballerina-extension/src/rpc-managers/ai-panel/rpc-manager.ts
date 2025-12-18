@@ -24,6 +24,7 @@ import {
     AIPanelPrompt,
     AddFilesToProjectRequest,
     AddToProjectRequest,
+    BIIntelSecrets,
     BIModuleNodesRequest,
     BISourceCodeResponse,
     DeleteFromProjectRequest,
@@ -41,53 +42,47 @@ import {
     LLMDiagnostics,
     LoginMethod,
     MetadataWithAttachments,
-    OperationType,
     PostProcessRequest,
     PostProcessResponse,
     ProcessContextTypeCreationRequest,
     ProcessMappingParametersRequest,
     ProjectDiagnostics,
-    ProjectModule,
     ProjectSource,
     RelevantLibrariesAndFunctionsRequest,
     RelevantLibrariesAndFunctionsResponse,
     RepairParams,
     RequirementSpecification,
-    SourceFile,
+    SemanticDiffRequest,
+    SemanticDiffResponse,
     SubmitFeedbackRequest,
     TestGenerationMentions,
-    TestGenerationRequest,
-    TestGenerationResponse,
     TestGeneratorIntermediaryState,
-    TestPlanGenerationRequest,
+    TestPlanGenerationRequest
 } from "@wso2/ballerina-core";
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import path from "path";
-import { parse } from 'toml';
 import { workspace } from 'vscode';
 
+import { AIChatMachineEventType } from "@wso2/ballerina-core/lib/state-machine-types";
 import { isNumber } from "lodash";
 import { ExtendedLangClient } from "src/core";
-import { fetchWithAuth } from "../../../src/features/ai/service/connection";
-import { openChatWindowWithCommand } from "../../../src/features/ai/service/datamapper/datamapper";
-import { generateDesign } from "../../../src/features/ai/service/design/design";
-import { generateOpenAPISpec } from "../../../src/features/ai/service/openapi/openapi";
-import { AIStateMachine, openAIPanelWithPrompt } from "../../../src/views/ai-panel/aiMachine";
 import { AIChatStateMachine } from "../../../src/views/ai-panel/aiChatMachine";
-import { AIChatMachineEventType } from "@wso2/ballerina-core/lib/state-machine-types";
+import { AIStateMachine, openAIPanelWithPrompt } from "../../../src/views/ai-panel/aiMachine";
 import { checkToken } from "../../../src/views/ai-panel/utils";
 import { extension } from "../../BalExtensionContext";
-import { generateDocumentationForService } from "../../features/ai/service/documentation/doc_generator";
-// import { generateHealthcareCode } from "../../features/ai/service/healthcare/healthcare";
-import { selectRequiredFunctions } from "../../features/ai/service/libs/funcs";
-import { GenerationType, getSelectedLibraries } from "../../features/ai/service/libs/libs";
-import { Library } from "../../features/ai/service/libs/libs_types";
-import { generateFunctionTests } from "../../features/ai/service/test/function_tests";
-import { generateTestPlan } from "../../features/ai/service/test/test_plan";
-import { generateTest, getDiagnostics, getResourceAccessorDef, getResourceAccessorNames, getServiceDeclaration, getServiceDeclarationNames } from "../../features/ai/testGenerator";
+import { getPendingReviewContext, clearPendingReviewContext } from "../../features/ai/agent/stream-handlers/handlers/finish-handler";
+import { openChatWindowWithCommand } from "../../features/ai/data-mapper/index";
+import { generateDocumentationForService } from "../../features/ai/documentation/generator";
+import { generateOpenAPISpec } from "../../features/ai/openapi/index";
+import { fetchWithAuth } from "../../features/ai/utils/ai-client";
+import { getServiceDeclarationNames } from "../../../src/features/ai/documentation/utils";
+import { getSelectedLibraries } from "../../features/ai/tools/healthcare-library";
 import { OLD_BACKEND_URL, closeAllBallerinaFiles } from "../../features/ai/utils";
+import { selectRequiredFunctions } from "../../features/ai/utils/libs/function-registry";
+import { GenerationType } from "../../features/ai/utils/libs/libraries";
+import { Library } from "../../features/ai/utils/libs/library-types";
 import { getLLMDiagnosticArrayAsString, handleChatSummaryFailure } from "../../features/natural-programming/utils";
 import { StateMachine, updateView } from "../../stateMachine";
 import { getAccessToken, getLoginMethod, getRefreshedAccessToken, loginGithubCopilot } from "../../utils/ai/auth";
@@ -97,14 +92,11 @@ import { refreshDataMapper } from "../data-mapper/utils";
 import {
     DEVELOPMENT_DOCUMENT,
     NATURAL_PROGRAMMING_DIR_NAME, REQUIREMENT_DOC_PREFIX,
-    REQUIREMENT_MD_DOCUMENT,
-    REQUIREMENT_TEXT_DOCUMENT,
-    REQ_KEY, TEST_DIR_NAME
+    TEST_DIR_NAME
 } from "./constants";
 import { attemptRepairProject, checkProjectDiagnostics } from "./repair-utils";
-import { AIPanelAbortController, addToIntegration, cleanDiagnosticMessages, isErrorCode, requirementsSpecification, searchDocumentation } from "./utils";
+import { AIPanelAbortController, addToIntegration, cleanDiagnosticMessages, searchDocumentation } from "./utils";
 import { fetchData } from "./utils/fetch-data-utils";
-import { getWorkspaceTomlValues } from "./../../../src/utils/config";
 
 export class AiPanelRpcManager implements AIPanelAPI {
 
@@ -126,10 +118,17 @@ export class AiPanelRpcManager implements AIPanelAPI {
             }
 
             try {
-                const workspaceFolderPath = workspace.workspaceFolders[0].uri.fsPath;
+                let projectIdentifier: string;
+                const cloudProjectId = process.env.CLOUD_INITIAL_PROJECT_ID;
+                
+                if (cloudProjectId) {
+                    projectIdentifier = cloudProjectId;
+                } else {
+                    projectIdentifier = workspace.workspaceFolders[0].uri.fsPath;
+                }
 
                 const hash = crypto.createHash('sha256')
-                    .update(workspaceFolderPath)
+                    .update(projectIdentifier)
                     .digest('hex');
 
                 resolve(hash);
@@ -149,11 +148,14 @@ export class AiPanelRpcManager implements AIPanelAPI {
     async getAccessToken(): Promise<string> {
         return new Promise(async (resolve, reject) => {
             try {
-                const accessToken = await getAccessToken();
-                if (!accessToken) {
+                const credentials = await getAccessToken();
+
+                if (!credentials) {
                     reject(new Error("Access Token is undefined"));
                     return;
                 }
+                const secrets = credentials.secrets as BIIntelSecrets;
+                const accessToken = secrets.accessToken;
                 resolve(accessToken);
             } catch (error) {
                 reject(error);
@@ -205,9 +207,6 @@ export class AiPanelRpcManager implements AIPanelAPI {
         }
 
         await writeBallerinaFileDidOpen(balFilePath, req.content);
-        updateView();
-        const datamapperMetadata = StateMachine.context().dataMapperMetadata;
-        await refreshDataMapper(balFilePath, datamapperMetadata.codeData, datamapperMetadata.name);
         return true;
     }
 
@@ -318,55 +317,6 @@ export class AiPanelRpcManager implements AIPanelAPI {
         return false;
     }
 
-    async getGeneratedTests(params: TestGenerationRequest): Promise<TestGenerationResponse> {
-        return new Promise(async (resolve, reject) => {
-            try {
-                const projectPath = StateMachine.context().projectPath;
-
-                const generatedTests = await generateTest(projectPath, params, AIPanelAbortController.getInstance());
-                resolve(generatedTests);
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
-
-    async getTestDiagnostics(params: TestGenerationResponse): Promise<ProjectDiagnostics> {
-        return new Promise(async (resolve, reject) => {
-            try {
-                const projectPath = StateMachine.context().projectPath;
-                const diagnostics = await getDiagnostics(projectPath, params);
-                resolve(diagnostics);
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
-
-    async getServiceSourceForName(params: string): Promise<string> {
-        return new Promise(async (resolve, reject) => {
-            try {
-                const projectPath = StateMachine.context().projectPath;
-                const { serviceDeclaration } = await getServiceDeclaration(projectPath, params);
-                resolve(serviceDeclaration.source);
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
-
-    async getResourceSourceForMethodAndPath(params: string): Promise<string> {
-        return new Promise(async (resolve, reject) => {
-            try {
-                const projectPath = StateMachine.context().projectPath;
-                const { resourceAccessorDef } = await getResourceAccessorDef(projectPath, params);
-                resolve(resourceAccessorDef.source);
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
-
     async getServiceNames(): Promise<TestGenerationMentions> {
         return new Promise(async (resolve, reject) => {
             try {
@@ -374,20 +324,6 @@ export class AiPanelRpcManager implements AIPanelAPI {
                 const serviceDeclNames = await getServiceDeclarationNames(projectPath);
                 resolve({
                     mentions: serviceDeclNames
-                });
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
-
-    async getResourceMethodAndPaths(): Promise<TestGenerationMentions> {
-        return new Promise(async (resolve, reject) => {
-            try {
-                const projectPath = StateMachine.context().projectPath;
-                const resourceAccessorNames = await getResourceAccessorNames(projectPath);
-                resolve({
-                    mentions: resourceAccessorNames
                 });
             } catch (error) {
                 reject(error);
@@ -534,7 +470,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
     }
 
     async updateRequirementSpecification(requirementsSpecification: RequirementSpecification) {
-        const naturalProgrammingDir = path.join(requirementsSpecification.filepath, 'natural-programming');
+        const naturalProgrammingDir = path.join(StateMachine.context().projectPath, 'natural-programming');
         const requirementsFilePath = path.join(naturalProgrammingDir, 'requirements.txt');
 
         // Create the 'natural-programming' directory if it doesn't exist
@@ -546,8 +482,8 @@ export class AiPanelRpcManager implements AIPanelAPI {
         fs.writeFileSync(requirementsFilePath, requirementsSpecification.content, 'utf8');
     }
 
-    async getDriftDiagnosticContents(projectPath: string): Promise<LLMDiagnostics> {
-        const result = await getLLMDiagnosticArrayAsString(projectPath);
+    async getDriftDiagnosticContents(): Promise<LLMDiagnostics> {
+        const result = await getLLMDiagnosticArrayAsString(StateMachine.context().projectPath);
         if (isNumber(result)) {
             return {
                 statusCode: result,
@@ -561,8 +497,8 @@ export class AiPanelRpcManager implements AIPanelAPI {
         };
     }
 
-    async createTestDirecoryIfNotExists(directoryPath: string) {
-        const testDirName = path.join(directoryPath, TEST_DIR_NAME);
+    async createTestDirecoryIfNotExists() {
+        const testDirName = path.join(StateMachine.context().projectPath, TEST_DIR_NAME);
         if (!fs.existsSync(testDirName)) {
             fs.mkdirSync(testDirName, { recursive: true }); // Add recursive: true
         }
@@ -645,11 +581,11 @@ export class AiPanelRpcManager implements AIPanelAPI {
     }
 
     async generateTestPlan(params: TestPlanGenerationRequest): Promise<void> {
-        await generateTestPlan(params);
+        // await generateTestPlan(params);
     }
 
     async generateFunctionTests(params: TestGeneratorIntermediaryState): Promise<void> {
-        await generateFunctionTests(params);
+        // await generateFunctionTests(params);
     }
 
     async generateHealthcareCode(params: GenerateCodeRequest): Promise<void> {
@@ -723,7 +659,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         });
     }
 
-    async generateContextTypes(params: ProcessContextTypeCreationRequest): Promise<boolean> {
+    async generateContextTypes(params: ProcessContextTypeCreationRequest): Promise<void> {
         AIChatStateMachine.sendEvent({
             type: AIChatMachineEventType.SUBMIT_DATAMAPPER_REQUEST,
             payload: {
@@ -732,8 +668,6 @@ export class AiPanelRpcManager implements AIPanelAPI {
                 userMessage: 'Generate context types'
             }
         });
-
-        return true;
     }
 
     async openChatWindowWithCommand(): Promise<void> {
@@ -749,9 +683,9 @@ export class AiPanelRpcManager implements AIPanelAPI {
         }
     }
 
-    async generateDesign(params: GenerateAgentCodeRequest): Promise<boolean> {
+    async generateAgent(params: GenerateAgentCodeRequest): Promise<boolean> {
         AIChatStateMachine.sendEvent({
-            type: AIChatMachineEventType.SUBMIT_DESIGN_PROMPT,
+            type: AIChatMachineEventType.SUBMIT_AGENT_PROMPT,
             payload: {
                 prompt: params.usecase,
                 isPlanMode: params.isPlanMode ?? true,
@@ -764,16 +698,112 @@ export class AiPanelRpcManager implements AIPanelAPI {
     async openAIPanel(params: AIPanelPrompt): Promise<void> {
         openAIPanelWithPrompt(params);
     }
-}
 
+    async isPlanModeFeatureEnabled(): Promise<boolean> {
+        const config = workspace.getConfiguration('ballerina');
+        return config.get<boolean>('ai.planMode', false);
+    }
+
+    async getSemanticDiff(params: SemanticDiffRequest): Promise<SemanticDiffResponse> {
+        const context = StateMachine.context();
+        console.log(">>> requesting semantic diff from ls", JSON.stringify(params));
+        try {
+            const res: SemanticDiffResponse = await context.langClient.getSemanticDiff(params);
+            console.log(">>> semantic diff response from ls", JSON.stringify(res));
+            return res;
+        } catch (error) {
+            console.log(">>> error in getting semantic diff", error);
+            return undefined;
+        }
+    }
+
+    async acceptChanges(): Promise<void> {
+        const reviewContext = getPendingReviewContext();
+        
+        if (!reviewContext) {
+            console.warn("[Review Actions] No pending review context found for accept");
+            return;
+        }
+
+        try {
+            // Integrate code to workspace if there are modified files
+            if (reviewContext.modifiedFiles.length > 0) {
+                const { integrateCodeToWorkspace } = await import("../../features/ai/agent/utils");
+                const modifiedFilesSet = new Set(reviewContext.modifiedFiles);
+                await integrateCodeToWorkspace(reviewContext.tempProjectPath, modifiedFilesSet, reviewContext.ctx);
+                console.log(`[Review Actions] Integrated ${reviewContext.modifiedFiles.length} file(s) to workspace`);
+            }
+
+            // Cleanup
+            const { sendAgentDidCloseForProjects } = await import("../../features/ai/utils/project/ls-schema-notifications");
+            const { cleanupTempProject } = await import("../../features/ai/utils/project/temp-project");
+            
+            sendAgentDidCloseForProjects(reviewContext.tempProjectPath, reviewContext.projects);
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            if (reviewContext.shouldCleanup) {
+                cleanupTempProject(reviewContext.tempProjectPath);
+            }
+            
+            clearPendingReviewContext();
+            
+            // Hide review actions component
+            AIChatStateMachine.sendEvent({
+                type: AIChatMachineEventType.HIDE_REVIEW_ACTIONS,
+            });
+        } catch (error) {
+            console.error("[Review Actions] Error accepting changes:", error);
+            throw error;
+        }
+    }
+
+    async declineChanges(): Promise<void> {
+        const reviewContext = getPendingReviewContext();
+        
+        if (!reviewContext) {
+            console.warn("[Review Actions] No pending review context found for decline");
+            return;
+        }
+
+        try {
+            // Just cleanup without integrating changes
+            const { sendAgentDidCloseForProjects } = await import("../../features/ai/utils/project/ls-schema-notifications");
+            const { cleanupTempProject } = await import("../../features/ai/utils/project/temp-project");
+            
+            sendAgentDidCloseForProjects(reviewContext.tempProjectPath, reviewContext.projects);
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            if (reviewContext.shouldCleanup) {
+                cleanupTempProject(reviewContext.tempProjectPath);
+            }
+            
+            clearPendingReviewContext();
+            
+            // Hide review actions component
+            AIChatStateMachine.sendEvent({
+                type: AIChatMachineEventType.HIDE_REVIEW_ACTIONS,
+            });
+        } catch (error) {
+            console.error("[Review Actions] Error declining changes:", error);
+            throw error;
+        }
+    }
+
+    async showReviewActions(): Promise<void> {
+        AIChatStateMachine.sendEvent({
+            type: AIChatMachineEventType.SHOW_REVIEW_ACTIONS,
+        });
+    }
+
+    async hideReviewActions(): Promise<void> {
+        AIChatStateMachine.sendEvent({
+            type: AIChatMachineEventType.HIDE_REVIEW_ACTIONS,
+        });
+    }
+}
 
 interface SummaryResponse {
     summary: string;
-}
-
-interface BalModification {
-    fileUri: string;
-    moduleName: string;
 }
 
 async function setupProjectEnvironment(project: ProjectSource): Promise<{ langClient: ExtendedLangClient, tempDir: string } | null> {

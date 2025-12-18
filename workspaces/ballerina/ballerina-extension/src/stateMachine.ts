@@ -41,6 +41,7 @@ import { AIStateMachine } from './views/ai-panel/aiMachine';
 import { StateMachinePopup } from './stateMachinePopup';
 import { checkIsBallerinaPackage, checkIsBI, fetchScope, getOrgPackageName, UndoRedoManager, getProjectTomlValues, getOrgAndPackageName, checkIsBallerinaWorkspace } from './utils';
 import { AIChatStateMachine } from './views/ai-panel/aiChatMachine';
+import { activateDevantFeatures } from './features/devant/activator';
 import { buildProjectsStructure } from './utils/project-artifacts';
 import { runCommandWithOutput } from './utils/runCommand';
 import { buildOutputChannel } from './utils/logger';
@@ -59,6 +60,7 @@ interface MachineContext extends VisualizerLocation {
     isBISupported: boolean;
     errorCode: string | null;
     dependenciesResolved?: boolean;
+    isInDevant: boolean;
 }
 
 export let history: History;
@@ -76,7 +78,8 @@ const stateMachine = createMachine<MachineContext>(
             errorCode: null,
             isBISupported: false,
             view: MACHINE_VIEW.PackageOverview,
-            dependenciesResolved: false
+            dependenciesResolved: false,
+            isInDevant: !!process.env.CLOUD_STS_TOKEN
         },
         on: {
             RESET_TO_EXTENSION_READY: {
@@ -92,7 +95,7 @@ const stateMachine = createMachine<MachineContext>(
                         queueMicrotask(() => {
                             commands.executeCommand("BI.project-explorer.refresh");
                             // Check if the current view is Service desginer and if so don't notify the webview
-                            if (StateMachine.context().view !== MACHINE_VIEW.ServiceDesigner) {
+                            if (StateMachine.context().view !== MACHINE_VIEW.ServiceDesigner && StateMachine.context().view !== MACHINE_VIEW.BIDiagram) {
                                 notifyCurrentWebview();
                             }
                         });
@@ -310,7 +313,8 @@ const stateMachine = createMachine<MachineContext>(
                                 addType: (context, event) => event.viewLocation?.addType,
                                 dataMapperMetadata: (context, event) => event.viewLocation?.dataMapperMetadata,
                                 artifactInfo: (context, event) => event.viewLocation?.artifactInfo,
-                                rootDiagramId: (context, event) => event.viewLocation?.rootDiagramId
+                                rootDiagramId: (context, event) => event.viewLocation?.rootDiagramId,
+                                reviewData: (context, event) => event.viewLocation?.reviewData
                             }),
                             (context, event) => notifyTreeView(
                                 context.projectPath,
@@ -370,7 +374,8 @@ const stateMachine = createMachine<MachineContext>(
                                     position: (context, event) => event.data.position,
                                     syntaxTree: (context, event) => event.data.syntaxTree,
                                     focusFlowDiagramView: (context, event) => event.data.focusFlowDiagramView,
-                                    dataMapperMetadata: (context, event) => event.data.dataMapperMetadata
+                                    dataMapperMetadata: (context, event) => event.data.dataMapperMetadata,
+                                    reviewData: (context, event) => event.data.reviewData
                                 })
                             }
                         }
@@ -395,7 +400,8 @@ const stateMachine = createMachine<MachineContext>(
                                         addType: (context, event) => event.viewLocation?.addType,
                                         dataMapperMetadata: (context, event) => event.viewLocation?.dataMapperMetadata,
                                         artifactInfo: (context, event) => event.viewLocation?.artifactInfo,
-                                        rootDiagramId: (context, event) => event.viewLocation?.rootDiagramId
+                                        rootDiagramId: (context, event) => event.viewLocation?.rootDiagramId,
+                                        reviewData: (context, event) => event.viewLocation?.reviewData
                                     }),
                                     (context, event) => notifyTreeView(
                                         event.viewLocation?.projectPath || context?.projectPath,
@@ -417,7 +423,8 @@ const stateMachine = createMachine<MachineContext>(
                                         type: (context, event) => event.viewLocation?.type,
                                         isGraphql: (context, event) => event.viewLocation?.isGraphql,
                                         addType: (context, event) => event.viewLocation?.addType,
-                                        dataMapperMetadata: (context, event) => event.viewLocation?.dataMapperMetadata
+                                        dataMapperMetadata: (context, event) => event.viewLocation?.dataMapperMetadata,
+                                        reviewData: (context, event) => event.viewLocation?.reviewData
                                     }),
                                     (context, event) => notifyTreeView(
                                         context.projectPath,
@@ -457,6 +464,7 @@ const stateMachine = createMachine<MachineContext>(
                     if (!ls.biSupported) {
                         commands.executeCommand('setContext', 'BI.status', 'updateNeed');
                     }
+                    activateDevantFeatures(ls);
                     resolve({ langClient: ls.langClient, isBISupported: ls.biSupported });
                 } catch (error) {
                     throw new Error("LS Activation failed", error);
@@ -641,7 +649,8 @@ const stateMachine = createMachine<MachineContext>(
                             type: context?.type,
                             isGraphql: context?.isGraphql,
                             addType: context?.addType,
-                            dataMapperMetadata: context?.dataMapperMetadata
+                            dataMapperMetadata: context?.dataMapperMetadata,
+                            reviewData: context?.reviewData
                         }
                     });
                     return resolve();
@@ -663,7 +672,7 @@ const stateMachine = createMachine<MachineContext>(
                     return resolve({ ...selectedEntry.location, view: selectedEntry.location.view ? selectedEntry.location.view : MACHINE_VIEW.PackageOverview });
                 }
 
-                if (selectedEntry && (selectedEntry.location.view === MACHINE_VIEW.ERDiagram || selectedEntry.location.view === MACHINE_VIEW.ServiceDesigner || selectedEntry.location.view === MACHINE_VIEW.BIDiagram)) {
+                if (selectedEntry && (selectedEntry.location.view === MACHINE_VIEW.ERDiagram || selectedEntry.location.view === MACHINE_VIEW.ServiceDesigner || selectedEntry.location.view === MACHINE_VIEW.BIDiagram || selectedEntry.location.view === MACHINE_VIEW.ReviewMode)) {
                     return resolve(selectedEntry.location);
                 }
 
@@ -989,8 +998,8 @@ async function handleMultipleWorkspaceFolders(workspaceFolders: readonly Workspa
         const isBI = checkIsBI(balProjects[0].uri);
         const scope = isBI && fetchScope(balProjects[0].uri);
         const { orgName, packageName } = getOrgPackageName(balProjects[0].uri.fsPath);
-        setBIContext(isBI);
         const projectPath = balProjects[0].uri.fsPath;
+        setContextValues(isBI, projectPath);
         return { isBI, projectPath, scope, orgName, packageName };
     }
 
@@ -1002,7 +1011,7 @@ async function handleSingleWorkspaceFolder(workspaceURI: Uri): Promise<ProjectMe
 
     if (isBallerinaWorkspace) {
         const isBI = checkIsBI(workspaceURI);
-        setBIContext(isBI);
+        setContextValues(isBI, undefined, workspaceURI.fsPath);
 
         return { isBI, workspacePath: workspaceURI.fsPath };
     } else {
@@ -1012,7 +1021,7 @@ async function handleSingleWorkspaceFolder(workspaceURI: Uri): Promise<ProjectMe
         const projectPath = isBallerinaPackage ? workspaceURI.fsPath : "";
         const { orgName, packageName } = getOrgPackageName(projectPath);
 
-        setBIContext(isBI);
+        setContextValues(isBI, projectPath);
         if (!isBI) {
             console.error("No BI enabled workspace found");
         }
@@ -1044,6 +1053,7 @@ function notifyTreeView(
     }
 }
 
-function setBIContext(isBI: boolean) {
+function setContextValues(isBI: boolean, projectPath?: string, workspacePath?: string) {
     commands.executeCommand('setContext', 'isBIProject', isBI);
+    commands.executeCommand('setContext', 'isSupportedProject', projectPath || workspacePath);
 }

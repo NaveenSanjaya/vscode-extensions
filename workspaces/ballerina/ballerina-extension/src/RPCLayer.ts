@@ -137,6 +137,7 @@ async function getContext(): Promise<VisualizerLocation> {
             position: context.position,
             syntaxTree: context.syntaxTree,
             isBI: context.isBI,
+            isInDevant: context.isInDevant,
             projectPath: context.projectPath,
             serviceType: context.serviceType,
             type: context.type,
@@ -155,7 +156,8 @@ async function getContext(): Promise<VisualizerLocation> {
             org: context.org,
             package: context.package,
             dataMapperMetadata: context.dataMapperMetadata,
-            artifactInfo: context.artifactInfo
+            artifactInfo: context.artifactInfo,
+            reviewData: context.reviewData
         });
     });
 }

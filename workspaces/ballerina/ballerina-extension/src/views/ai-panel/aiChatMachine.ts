@@ -18,10 +18,11 @@
 
 /* eslint-disable @typescript-eslint/naming-convention */
 import { createMachine, assign, interpret } from 'xstate';
+import { workspace } from 'vscode';
 import { extension } from '../../BalExtensionContext';
 import { AIChatMachineContext, AIChatMachineEventType, AIChatMachineSendableEvent, AIChatMachineStateValue, TaskStatus, Checkpoint } from '@wso2/ballerina-core/lib/state-machine-types';
 import { GenerateAgentCodeRequest, SourceFile } from '@wso2/ballerina-core/lib/rpc-types/ai-panel/interfaces';
-import { generateDesign } from '../../features/ai/service/design/design';
+import { generateAgent } from '../../features/ai/agent/index';
 import { captureWorkspaceSnapshot, restoreWorkspaceSnapshot } from './checkpoint/checkpointUtils';
 import { getCheckpointConfig } from './checkpoint/checkpointConfig';
 import { notifyCheckpointCaptured } from '../../RPCLayer';
@@ -42,7 +43,7 @@ const cleanupOldCheckpoints = (checkpoints: Checkpoint[]): Checkpoint[] => {
 };
 
 // Temp project management removed from state machine
-// Each service (design, datamapper) now manages its own temp directory
+// Each service (agent, datamapper) now manages its own temp directory
 
 /**
  * Cleanup action - simplified since temp project management moved to services
@@ -108,8 +109,6 @@ const restoreCheckpointAction = (context: AIChatMachineContext, event: any) => {
     });
 };
 
-// integrateAndCleanupAction removed - integration and cleanup now handled by services
-
 const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEvent>({
     /** @xstate-layout N4IgpgJg5mDOIC5QCMCGAbdYBOBLAdqgLSq5EDGAFqgC4B0AogB5jkCuNBUAIragLaoADkJwBiCAHt8YOgQBukgNaywLdjTC8aA4aOwBtAAwBdRKCGTYuTtPMgmiACwBmABx0jXrwE4jfgEYAdgCAJgA2ABoQAE9EAFYjDwCjcLcncL8jYPiAX1zotEwcAmJSCmp6ZlYOLm1dEXEcbElsOiF0WgAzVv46NRrNesFGw1N7S2tbfHtHBFcPb19-bJCI6LiEcIi6cNS3UODgo1cA-IKQfEkIOHsirDxCEjIqWgmrG1w7JAdEIijYn9wvlChgHqVnhVaHQAJIQLDvKZfGY-OYBPZ0eKhFyuIKZeIBAI4pwbRBhNzxOhOHw0txuFwBLERYEXe4lJ7lV70ADiYBk2FoXAACp0URYPtNZs5QqStuEAp5vEEnAEnEEfKE3CzQcVHmUXpU6CLUPgAEpgeS4MAAd0Rn2+oDRDN2LnCQVCiRxbndPhJgIQbgV1JpPjcRiCWviPhcoRBIDZeshXLoAEERC15JBjWKQJN7TmnQrwq73Z6nN7Qr7ZQFvYqvEdi3iDi44wmIZzDdUNFwACqoWBKO2S1Fk53Ft0eoxen1+zaE+IuOghnxu8JOUJBTduVtg9n6qFVdS1fA8PgjfRD5FS+ZOOhBeIRnFeLcxlyyz2YpVOFV+HzxJw7rq7YGtCfYDualo2peDq-AgRJFiWk7TpWs6IJWoSfl4rqhOW3ruoB4IciB9BpkIGaQGBg4-Hmw6OqOCETmWFZVv6vqLksAR-iu7jBARe5Joa5oAFasJoECUdBBb0S6jFTuWM6yi4oZ1kY8QLi4Slat+fGJh20IAMKSPwHRgGJknXm6Cp-gyEQRFGOSytSi7xPSThJPZlYMjpwEHkaqDYJwYIxIZxlYGZ1ESleI5wWOiFMQp-opOWVIhuWal4pk3lEb5ADqpCcCeABirSGfgMjkDQrQAMqiOQ5nRYSQR0MEK4aiq5ZeASsr0k1iRLASYTukEWX7smDDYC02D1XRWwhEuC5hNs4T2fesrbJSSRPm6MYRmu5y5EAA */
     id: "ballerina-ai-chat",
@@ -129,24 +128,30 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
         currentSpec: undefined,
         isPlanMode: false,
         checkpoints: [],
+        showReviewActions: false,
+        operationType: undefined,
+        fileAttachments: [],
     } as AIChatMachineContext,
     on: {
-        [AIChatMachineEventType.SUBMIT_DESIGN_PROMPT]: {
+        [AIChatMachineEventType.SUBMIT_AGENT_PROMPT]: {
             target: "GeneratingPlan",
             actions: [
                 assign({
-                    generationType: () => 'design' as const,
+                    generationType: () => 'agent' as const,
                     chatHistory: (ctx, event) => addUserMessage(ctx.chatHistory, event.payload.prompt),
                     errorMessage: (_ctx) => undefined,
                     isPlanMode: (_ctx, event) => {
-                        const isExperimentalEnabled = extension.ballerinaExtInstance?.enabledExperimentalFeatures() ?? false;
-                        if (event.payload.isPlanMode && !isExperimentalEnabled) {
-                            console.log('[AIChatMachine] Plan mode requested but experimental features are disabled. Setting isPlanMode to false.');
+                        const isPlanModeEnabled = workspace.getConfiguration('ballerina.ai').get<boolean>('planMode', false);
+                        if (event.payload.isPlanMode && !isPlanModeEnabled) {
+                            console.log('[AIChatMachine] Plan mode requested but ballerina.ai.planMode configuration is disabled. Setting isPlanMode to false.');
                             return false;
                         }
                         return event.payload.isPlanMode;
                     },
                     codeContext: (_ctx, event) => normalizeCodeContext(event.payload.codeContext),
+                    showReviewActions: () => false, // Hide review actions when new prompt is submitted
+                    operationType: (_ctx, event) => event.payload.operationType,
+                    fileAttachments: (_ctx, event) => event.payload.fileAttachments ?? [],
                 }),
                 "captureCheckpoint",
             ],
@@ -200,6 +205,10 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
                     errorMessage: (_ctx) => undefined,
                     sessionId: (_ctx) => undefined,
                     checkpoints: (_ctx) => [],
+                    isPlanMode: (_ctx) => false,
+                    showReviewActions: (_ctx) => false,
+                    operationType : undefined,
+                    fileAttachments: (_ctx) => [],
                 }),
             ],
         },
@@ -212,6 +221,12 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
                 currentQuestion: (_ctx, event) => event.payload.state.currentQuestion,
                 errorMessage: (_ctx) => undefined,
                 sessionId: (_ctx, event) => event.payload.state.sessionId,
+                projectId: (_ctx, event) => event.payload.state.projectId,
+                checkpoints: (_ctx, event) => event.payload.state.checkpoints || [],
+                isPlanMode: (_ctx, event) => event.payload.state.isPlanMode || false,
+                autoApproveEnabled: (_ctx, event) => event.payload.state.autoApproveEnabled || false,
+                operationType: (_ctx, event) => event.payload.state.operationType || undefined,
+                fileAttachments: (_ctx, event) => event.payload.state.fileAttachments || [],
             }),
         },
         [AIChatMachineEventType.RESTORE_CHECKPOINT]: {
@@ -257,6 +272,16 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
                 target: "Completed",
             },
         ],
+        [AIChatMachineEventType.SHOW_REVIEW_ACTIONS]: {
+            actions: assign({
+                showReviewActions: () => true,
+            }),
+        },
+        [AIChatMachineEventType.HIDE_REVIEW_ACTIONS]: {
+            actions: assign({
+                showReviewActions: () => false,
+            }),
+        },
     },
     states: {
         Idle: {
@@ -271,8 +296,8 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
                 "saveChatState"
             ],
             invoke: {
-                id: "startDesignGeneration",
-                src: "startDesignGenerationService",
+                id: "startAgentGeneration",
+                src: "startAgentGenerationService",
             },
             on: {
                 [AIChatMachineEventType.PLAN_GENERATED]: {
@@ -581,10 +606,10 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
 // Service implementations
 
 /**
- * Service to start design generation
+ * Service to start agent generation
  * Each service now manages its own temp directory lifecycle
  */
-const startDesignGenerationService = async (context: AIChatMachineContext): Promise<void> => {
+const startAgentGenerationService = async (context: AIChatMachineContext): Promise<void> => {
     const lastMessage = context.chatHistory[context.chatHistory.length - 1];
     const usecase = lastMessage?.content;
     const previousHistory = context.chatHistory.slice(0, -1);
@@ -593,15 +618,15 @@ const startDesignGenerationService = async (context: AIChatMachineContext): Prom
     const requestBody: GenerateAgentCodeRequest = {
         usecase: usecase,
         chatHistory: convertChatHistoryToModelMessages(previousHistory),
-        operationType: "CODE_GENERATION",
-        fileAttachmentContents: [],
+        operationType: context.operationType,
+        fileAttachmentContents: context.fileAttachments,
         messageId: messageId,
-        isPlanMode: context.isPlanMode ?? true,
+        isPlanMode: context.isPlanMode ?? false,
         codeContext: context.codeContext,
     };
 
-    generateDesign(requestBody).catch(error => {
-        console.error('[startDesignGenerationService] Error:', error);
+    generateAgent(requestBody).catch(error => {
+        console.error('[startAgentGenerationService] Error:', error);
         chatStateService.send({
             type: AIChatMachineEventType.ERROR,
             payload: { message: error.message || 'Failed to generate plan' }
@@ -620,46 +645,44 @@ const executeDatamapperService = async (context: AIChatMachineContext): Promise<
 
     const { datamapperType, params } = context.commandParams;
 
+    // Get messageId from last message in chat history
+    const lastMessage = context.chatHistory[context.chatHistory.length - 1];
+    const messageId = lastMessage?.id;
+
+    if (!messageId) {
+        throw new Error('No messageId found in chat history');
+    }
+
     // Import datamapper functions dynamically
     const {
         generateMappingCode,
         generateInlineMappingCode,
         generateContextTypes
-    } = await import('../../features/ai/service/datamapper/datamapper');
+    } = await import('../../features/ai/data-mapper/index');
 
     let result: { modifiedFiles: string[], sourceFiles: SourceFile[] } | undefined;
 
     // Execute the appropriate datamapper function
     // Each function manages its own temp directory internally
+    // Pass messageId so they can emit save_chat events
     switch (datamapperType) {
         case 'function':
-            await generateMappingCode(params);
+            await generateMappingCode(params, messageId);
             result = { modifiedFiles: [], sourceFiles: [] }; // No return from these functions
             break;
         case 'inline':
-            await generateInlineMappingCode(params);
+            await generateInlineMappingCode(params, messageId);
             result = { modifiedFiles: [], sourceFiles: [] };
             break;
         case 'contextTypes':
-            await generateContextTypes(params);
+            await generateContextTypes(params, messageId);
             result = { modifiedFiles: [], sourceFiles: [] };
             break;
         default:
             throw new Error(`Unknown datamapper type: ${datamapperType}`);
     }
 
-    // Update chat message
-    const lastMessage = context.chatHistory[context.chatHistory.length - 1];
-    if (lastMessage) {
-        chatStateService.send({
-            type: AIChatMachineEventType.UPDATE_CHAT_MESSAGE,
-            payload: {
-                id: lastMessage.id,
-                uiResponse: `Datamapping (${datamapperType}) completed successfully`,
-            }
-        });
-    }
-
+    // Note: Chat history update is now handled by save_chat event from datamapper functions
     return { modifiedFiles: result.modifiedFiles };
 };
 
@@ -667,7 +690,7 @@ const executeDatamapperService = async (context: AIChatMachineContext): Promise<
 const chatStateService = interpret(
     chatMachine.withConfig({
         services: {
-            startDesignGenerationService: startDesignGenerationService,
+            startAgentGenerationService: startAgentGenerationService,
             executeDatamapper: executeDatamapperService,
         },
         actions: {
@@ -691,17 +714,17 @@ export const AIChatStateMachine = {
     initialize: () => {
         chatStateService.start();
 
-        // Attempt to restore state on initialization for current project
+        // Attempt to restore state from session storage for current project
         const projectId = generateProjectId();
         loadChatState(projectId).then((savedState) => {
             if (savedState && savedState.sessionId && savedState.projectId === projectId) {
-                console.log(`Restoring chat state for project: ${projectId}`);
+                console.log(`Restoring chat state for project: ${projectId} (from current session)`);
                 chatStateService.send({
                     type: AIChatMachineEventType.RESTORE_STATE,
                     payload: { state: savedState },
                 });
             } else {
-                console.log(`No saved state found for project: ${projectId}, starting fresh`);
+                console.log(`No session state found for project: ${projectId}, starting with fresh session`);
             }
         }).catch((error) => {
             console.error('Failed to restore chat state:', error);
@@ -720,9 +743,9 @@ export const AIChatStateMachine = {
         }
     },
     dispose: () => {
-        // Save state before disposing
-        const context = chatStateService.getSnapshot().context;
-        saveChatState(context);
+        // No need to save state on dispose - session-only storage will be cleared automatically
+        // when the extension deactivates (window closes)
+        console.log('[AIChatStateMachine] Disposing - session state will be cleared');
         chatStateService.stop();
     },
     /**

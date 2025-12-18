@@ -21,7 +21,7 @@ import { validateTestResult } from './test-validation';
 import { VSCODE_COMMANDS } from './constants';
 import { SourceFile } from "@wso2/ballerina-core";
 import { createIsolatedTestProject, cleanupIsolatedTestProject, extractSourceFiles, IsolatedProjectResult } from './test-project-utils';
-import { GenerateDesignForTestParams, GenerateDesignForTestResult } from '../../../../../src/features/ai/service/design/design-for-test';
+import { GenerateAgentForTestParams, GenerateAgentForTestResult } from '../../../../../src/features/ai/agent/index-for-test';
 
 /**
  * Executes a single test case and returns the result
@@ -34,7 +34,6 @@ export async function executeSingleTestCase(useCase: TestUseCase): Promise<TestC
     let aiTempProjectPath: string | null = null;
 
     try {
-        // Step 1: Create isolated copy of base project template in temp directory
         isolatedProject = createIsolatedTestProject(useCase.projectPath, useCase.id);
         console.log(`[${useCase.id}] Created isolated test project at: ${isolatedProject.path}`);
 
@@ -50,7 +49,7 @@ export async function executeSingleTestCase(useCase: TestUseCase): Promise<TestC
 
         // Step 4: Prepare generation parameters with isolated project path
         // The command will set StateMachine.context().projectPath internally
-        const params: GenerateDesignForTestParams = {
+        const params: GenerateAgentForTestParams = {
             usecase: useCase.usecase,
             chatHistory: [],
             operationType: useCase.operationType,
@@ -62,11 +61,11 @@ export async function executeSingleTestCase(useCase: TestUseCase): Promise<TestC
         };
 
         // Step 5: Execute test command
-        // generateDesignForTest will:
+        // generateAgentForTest will:
         // 1. Set StateMachine.context().projectPath to params.projectPath
-        // 2. Call generateDesignCore which creates temp copy from StateMachine.context().projectPath
-        const generationResult = await commands.executeCommand<GenerateDesignForTestResult>(
-            VSCODE_COMMANDS.AI_GENERATE_DESIGN_FOR_TEST,
+        // 2. Call generateAgentCore which creates temp copy from StateMachine.context().projectPath
+        const generationResult = await commands.executeCommand<GenerateAgentForTestResult>(
+            VSCODE_COMMANDS.AI_GENERATE_AGENT_FOR_TEST,
             params,
             testEventHandler
         );
@@ -109,11 +108,12 @@ export async function executeSingleTestCase(useCase: TestUseCase): Promise<TestC
         // Step 8: Always cleanup both isolated project and AI temp project
         if (aiTempProjectPath) {
             console.log(`[${useCase.id}] Cleaning up AI temp project: ${aiTempProjectPath}`);
-            cleanupIsolatedTestProject({ path: aiTempProjectPath, basePath: '', testId: useCase.id });
+            // cleanupIsolatedTestProject({ path: aiTempProjectPath, basePath: '', testId: useCase.id });
         }
+
         if (isolatedProject) {
             console.log(`[${useCase.id}] Cleaning up isolated test project: ${isolatedProject.path}`);
-            cleanupIsolatedTestProject(isolatedProject);
+            // cleanupIsolatedTestProject(isolatedProject);
         }
     }
 }

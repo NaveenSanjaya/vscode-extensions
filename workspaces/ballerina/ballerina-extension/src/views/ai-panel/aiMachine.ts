@@ -68,7 +68,7 @@ export const closeAIWebview = () => {
  * });
  *
  * @example
- * // Open with text input (design mode is the default)
+ * // Open with text input (agent mode is the default)
  * openAIPanelWithPrompt({
  *   type: 'text',
  *   text: 'Generate a REST API',
@@ -113,7 +113,7 @@ const aiMachine = createMachine<AIMachineContext, AIMachineSendableEvent>({
                         target: 'Authenticated',
                         actions: assign({
                             loginMethod: (_ctx, event) => event.data.loginMethod,
-                            userToken: (_ctx, event) => ({ token: event.data.token }),
+                            userToken: (_ctx, event) => ({ credentials: event.data }),
                             errorMessage: (_ctx) => undefined,
                         })
                     },
@@ -300,7 +300,7 @@ const aiMachine = createMachine<AIMachineContext, AIMachineSendableEvent>({
                 src: 'getTokenAfterAuth',
                 onDone: {
                     actions: assign({
-                        userToken: (_ctx, event) => ({ token: event.data.token }),
+                        userToken: (_ctx, event) => ({ credentials: event.data.credentials }),
                         loginMethod: (_ctx, event) => event.data.loginMethod,
                         errorMessage: (_ctx) => undefined,
                     })
@@ -395,7 +395,7 @@ const getTokenAfterAuth = async () => {
     if (!result || !loginMethod) {
         throw new Error('No authentication credentials found');
     }
-    return { token: result, loginMethod: loginMethod };
+    return { credentials: result.secrets, loginMethod: result.loginMethod };
 };
 
 const aiStateService = interpret(aiMachine.withConfig({

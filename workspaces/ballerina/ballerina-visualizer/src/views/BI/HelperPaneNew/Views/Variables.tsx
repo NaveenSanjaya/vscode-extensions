@@ -162,7 +162,7 @@ export const Variables = (props: VariablesPageProps) => {
             updatedNode,
             dataMapperMode === DataMapperDisplayMode.VIEW ? DataMapperDisplayMode.POPUP : DataMapperDisplayMode.NONE,
             {
-                closeSidePanel: false, updateLineRange: true, postUpdateCallBack: () => {
+                closeSidePanel: false, isChangeFromHelperPane: true, postUpdateCallBack: () => {
                     onClose()
                     closeModal(POPUP_IDS.VARIABLE);
                     onChange(newNodeNameRef.current, false, true);
@@ -282,7 +282,7 @@ export const Variables = (props: VariablesPageProps) => {
                     label: "Name",
                     description: "Name of the variable",
                 },
-                valueType: "IDENTIFIER",
+                types: [{fieldType: "IDENTIFIER", ballerinaType: "", selected: false}],
                 value: "var1",
                 optional: false,
                 editable: true,
@@ -295,7 +295,7 @@ export const Variables = (props: VariablesPageProps) => {
                     label: "Expression",
                     description: "Expression of the variable",
                 },
-                valueType: "ACTION_OR_EXPRESSION",
+                types: [{fieldType: "ACTION_OR_EXPRESSION", ballerinaType: "", selected: false}],
                 value: "",
                 optional: true,
                 editable: true,

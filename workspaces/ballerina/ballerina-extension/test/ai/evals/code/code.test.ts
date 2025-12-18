@@ -48,8 +48,7 @@ const TEST_USE_CASES: readonly TestUseCase[] = testCases.map((testCase, index) =
     id: `usecase_${index + 1}`,
     description: testCase.prompt.substring(0, 50) + "...",
     usecase: testCase.prompt,
-    operationType: "CODE_GENERATION" as const,
-    // projectPath: path.join(PROJECT_ROOT, testCase.projectPath)
+    operationType: undefined,
     projectPath: path.join(PROJECT_ROOT, testCase.projectPath)
 }));
 
@@ -151,7 +150,7 @@ async function setupTestEnvironment(): Promise<void> {
 
     while (attempts < TIMING.MAX_ACTIVATION_ATTEMPTS) {
         const availableCommands = await vscode.commands.getCommands();
-        if (availableCommands.includes(VSCODE_COMMANDS.AI_GENERATE_DESIGN_FOR_TEST)) {
+        if (availableCommands.includes(VSCODE_COMMANDS.AI_GENERATE_AGENT_FOR_TEST)) {
             break;
         }
         await new Promise(resolve => setTimeout(resolve, TIMING.EXTENSION_ACTIVATION_RETRY_INTERVAL));
