@@ -18,23 +18,28 @@
 
 import { AIChatMachineContext } from '@wso2/ballerina-core/lib/state-machine-types';
 import { generateProjectId } from './idGenerators';
-import { sessionStorage } from './chatStateStorage';
+import { sessionStorage } from './chatStateStorage'; // Keep for in-memory cache
+import { jsonFileStorage } from './jsonFileStorage'; // NEW
 
 /**
  * Saves the chat state for the current project (session-only storage)
  * @param context The chat machine context
+ * @param immediate If true, bypasses debouncing and saves immediately
  */
-export const saveChatState = (context: AIChatMachineContext): void => {
+export const saveChatState = async (context: AIChatMachineContext, immediate: boolean = false): Promise<void> => {
     try {
         if (!context.projectId) {
             console.warn("No project ID available, skipping state save");
             return;
         }
 
-        // Save to in-memory session storage instead of globalState
+        // 1. Save to session storage (fast, in-memory)
         sessionStorage.save(context.projectId, context);
 
-        console.log(`Saved chat state for project: ${context.projectId} (session-only)`);
+        // 2. Save to file
+        await jsonFileStorage.save(context.projectId, context, immediate);
+        
+        console.log(`✅ ${immediate ? 'Immediately saved' : 'Saved'} chat state for project: ${context.projectId}`);
     } catch (error) {
         console.error("Failed to save chat state:", error);
     }
@@ -66,14 +71,24 @@ export const clearChatStateAction = (context: AIChatMachineContext): void => {
 export const loadChatState = async (projectId?: string): Promise<AIChatMachineContext | undefined> => {
     try {
         const targetProjectId = projectId || generateProjectId();
-        const savedState = sessionStorage.load(targetProjectId);
 
-        if (savedState) {
-            console.log(`Loaded chat state for project: ${targetProjectId} (from current session), saved at: ${new Date(savedState.savedAt).toISOString()}`);
-            return savedState as unknown as AIChatMachineContext;
+        // 1. Try loading from file first (persistent)
+        const fileData = await jsonFileStorage.load(targetProjectId);
+        if (fileData) {
+            console.log(`✅ Loaded from file: ${targetProjectId}`);
+            // Also load into session storage for fast access
+            sessionStorage.save(targetProjectId, fileData as any);
+            return fileData as unknown as AIChatMachineContext;
         }
 
-        console.log(`No session state found for project: ${targetProjectId}`);
+        // 2. Fallback to session storage (current session only)
+        const sessionData = sessionStorage.load(targetProjectId);
+        if (sessionData) {
+            console.log(`✅ Loaded from session: ${targetProjectId}`);
+            return sessionData as unknown as AIChatMachineContext;
+        }
+
+        console.log(`No saved state for project: ${targetProjectId}`);
         return undefined;
     } catch (error) {
         console.error('Failed to load chat state:', error);
@@ -88,8 +103,12 @@ export const loadChatState = async (projectId?: string): Promise<AIChatMachineCo
 export const clearChatState = async (projectId?: string): Promise<void> => {
     try {
         const targetProjectId = projectId || generateProjectId();
+        
+        // Clear both session and file
         sessionStorage.clear(targetProjectId);
-        console.log(`Cleared chat state for project: ${targetProjectId}`);
+        await jsonFileStorage.clear(targetProjectId);
+        
+        console.log(`✅ Cleared chat state for project: ${targetProjectId}`);
     } catch (error) {
         console.error('Failed to clear chat state:', error);
     }

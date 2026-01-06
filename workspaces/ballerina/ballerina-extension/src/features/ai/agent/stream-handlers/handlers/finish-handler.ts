@@ -175,11 +175,27 @@ export class FinishHandler implements StreamEventHandler {
         const finalResponse = await context.response;
         const assistantMessages = finalResponse.messages || [];
 
+
         // Run final diagnostics
         const finalDiagnostics = await checkCompilationErrors(context.tempProjectPath);
         context.eventHandler({
             type: "diagnostics",
             diagnostics: finalDiagnostics.diagnostics
+        });
+
+        // FIXED: Construct uiResponse from accumulated content and update state explicitly
+        // This ensures the backend has the full response content before saving
+        const uiResponse = context.currentAssistantContent
+            .filter(part => part.type === "text")
+            .map(part => part.text)
+            .join("");
+
+        AIChatStateMachine.sendEvent({
+            type: AIChatMachineEventType.UPDATE_CHAT_MESSAGE,
+            payload: {
+                id: context.messageId,
+                uiResponse: uiResponse
+            }
         });
 
         // Store context data for later use by accept/decline/review actions

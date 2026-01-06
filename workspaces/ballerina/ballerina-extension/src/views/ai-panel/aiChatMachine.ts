@@ -112,7 +112,7 @@ const restoreCheckpointAction = (context: AIChatMachineContext, event: any) => {
 const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEvent>({
     /** @xstate-layout N4IgpgJg5mDOIC5QCMCGAbdYBOBLAdqgLSq5EDGAFqgC4B0AogB5jkCuNBUAIragLaoADkJwBiCAHt8YOgQBukgNaywLdjTC8aA4aOwBtAAwBdRKCGTYuTtPMgmiACwBmABx0jXrwE4jfgEYAdgCAJgA2ABoQAE9EAFYjDwCjcLcncL8jYPiAX1zotEwcAmJSCmp6ZlYOLm1dEXEcbElsOiF0WgAzVv46NRrNesFGw1N7S2tbfHtHBFcPb19-bJCI6LiEcIi6cNS3UODgo1cA-IKQfEkIOHsirDxCEjIqWgmrG1w7JAdEIijYn9wvlChgHqVnhVaHQAJIQLDvKZfGY-OYBPZ0eKhFyuIKZeIBAI4pwbRBhNzxOhOHw0txuFwBLERYEXe4lJ7lV70ADiYBk2FoXAACp0URYPtNZs5QqStuEAp5vEEnAEnEEfKE3CzQcVHmUXpU6CLUPgAEpgeS4MAAd0Rn2+oDRDN2LnCQVCiRxbndPhJgIQbgV1JpPjcRiCWviPhcoRBIDZeshXLoAEERC15JBjWKQJN7TmnQrwq73Z6nN7Qr7ZQFvYqvEdi3iDi44wmIZzDdUNFwACqoWBKO2S1Fk53Ft0eoxen1+zaE+IuOghnxu8JOUJBTduVtg9n6qFVdS1fA8PgjfRD5FS+ZOOhBeIRnFeLcxlyyz2YpVOFV+HzxJw7rq7YGtCfYDualo2peDq-AgRJFiWk7TpWs6IJWoSfl4rqhOW3ruoB4IciB9BpkIGaQGBg4-Hmw6OqOCETmWFZVv6vqLksAR-iu7jBARe5Joa5oAFasJoECUdBBb0S6jFTuWM6yi4oZ1kY8QLi4Slat+fGJh20IAMKSPwHRgGJknXm6Cp-gyEQRFGOSytSi7xPSThJPZlYMjpwEHkaqDYJwYIxIZxlYGZ1ESleI5wWOiFMQp-opOWVIhuWal4pk3lEb5ADqpCcCeABirSGfgMjkDQrQAMqiOQ5nRYSQR0MEK4aiq5ZeASsr0k1iRLASYTukEWX7smDDYC02D1XRWwhEuC5hNs4T2fesrbJSSRPm6MYRmu5y5EAA */
     id: "ballerina-ai-chat",
-    initial: "Idle",
+    initial: "Restoring",
     predictableActionArguments: true,
     context: {
         chatHistory: [],
@@ -155,6 +155,7 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
                 }),
                 "captureCheckpoint",
             ],
+            cond: (ctx) => !!ctx.sessionId,
         },
         [AIChatMachineEventType.SUBMIT_DATAMAPPER_REQUEST]: {
             target: "ExecutingDatamapper",
@@ -174,14 +175,19 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
                 }),
                 "captureCheckpoint",
             ],
+            cond: (ctx) => !!ctx.sessionId,
         },
         [AIChatMachineEventType.UPDATE_CHAT_MESSAGE]: {
-            actions: assign({
-                chatHistory: (ctx, event) => {
-                    const { id, modelMessages, uiResponse } = event.payload;
-                    return updateChatMessage(ctx.chatHistory, id, { uiResponse, modelMessages });
-                },
-            }),
+            actions: [
+                assign({
+                    chatHistory: (ctx, event) => {
+                        console.log('[AIChatMachine] UPDATE_CHAT_MESSAGE received, updating chatHistory');
+                        const { id, modelMessages, uiResponse } = event.payload;
+                        return updateChatMessage(ctx.chatHistory, id, { uiResponse, modelMessages });
+                    },
+                }),
+                "saveChatStateImmediate" // Save immediately when AI responds
+            ],
         },
         [AIChatMachineEventType.ENABLE_AUTO_APPROVE]: {
             actions: assign({
@@ -284,10 +290,41 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
         },
     },
     states: {
+        Restoring: {
+            invoke: {
+                id: "restoreState",
+                src: async () => {
+                    const projectId = generateProjectId();
+                    const savedState = await loadChatState(projectId);
+                    return { projectId, savedState } as const;
+                },
+                onDone: {
+                    target: "Idle",
+                    actions: assign({
+                        // If we have a saved state, restore it. Otherwise keep defaults.
+                        chatHistory: (ctx, e: any) => e.data.savedState?.chatHistory ?? ctx.chatHistory,
+                        currentPlan: (ctx, e: any) => e.data.savedState?.currentPlan ?? ctx.currentPlan,
+                        currentTaskIndex: (ctx, e: any) => e.data.savedState?.currentTaskIndex ?? ctx.currentTaskIndex,
+                        currentQuestion: (ctx, e: any) => e.data.savedState?.currentQuestion ?? ctx.currentQuestion,
+                        errorMessage: (_ctx) => undefined,
+                        sessionId: (ctx, e: any) => e.data.savedState?.sessionId ?? ctx.sessionId,
+                        projectId: (ctx, e: any) => e.data.savedState?.projectId ?? e.data.projectId ?? ctx.projectId,
+                        checkpoints: (ctx, e: any) => e.data.savedState?.checkpoints ?? ctx.checkpoints,
+                        isPlanMode: (ctx, e: any) => e.data.savedState?.isPlanMode ?? ctx.isPlanMode,
+                        autoApproveEnabled: (ctx, e: any) => e.data.savedState?.autoApproveEnabled ?? ctx.autoApproveEnabled,
+                        operationType: (ctx, e: any) => e.data.savedState?.operationType ?? ctx.operationType,
+                        fileAttachments: (ctx, e: any) => e.data.savedState?.fileAttachments ?? ctx.fileAttachments,
+                    }),
+                },
+                onError: {
+                    target: "Idle",
+                },
+            },
+        },
         Idle: {
             entry: assign({
-                sessionId: (_ctx) => generateSessionId(),
-                projectId: (_ctx) => generateProjectId(),
+                sessionId: (ctx) => ctx.sessionId ?? generateSessionId(),
+                projectId: (ctx) => ctx.projectId ?? generateProjectId(),
             }),
         },
         GeneratingPlan: {
@@ -499,7 +536,7 @@ const chatMachine = createMachine<AIChatMachineContext, AIChatMachineSendableEve
         Completed: {
             entry: [
                 "cleanupAction",  // NEW: Just cleanup (integration done by services)
-                "saveChatState"
+                "saveChatStateImmediate"  // Force immediate save (bypass debounce)
             ],
         },
         PartiallyCompleted: {
@@ -694,7 +731,14 @@ const chatStateService = interpret(
             executeDatamapper: executeDatamapperService,
         },
         actions: {
-            saveChatState: (context) => saveChatState(context),
+            saveChatState: (context) => {
+                console.log('[AIChatMachine] saveChatState action triggered');
+                saveChatState(context);
+            },
+            saveChatStateImmediate: (context) => {
+                console.log('[AIChatMachine] saveChatStateImmediate action triggered');
+                saveChatState(context, true);
+            },
             clearChatState: (context) => clearChatStateAction(context),
             captureCheckpoint: (context) => captureCheckpointAction(context),
             restoreCheckpoint: (context, event) => restoreCheckpointAction(context, event),
@@ -713,22 +757,7 @@ const isExtendedEvent = <K extends AIChatMachineEventType>(
 export const AIChatStateMachine = {
     initialize: () => {
         chatStateService.start();
-
-        // Attempt to restore state from session storage for current project
-        const projectId = generateProjectId();
-        loadChatState(projectId).then((savedState) => {
-            if (savedState && savedState.sessionId && savedState.projectId === projectId) {
-                console.log(`Restoring chat state for project: ${projectId} (from current session)`);
-                chatStateService.send({
-                    type: AIChatMachineEventType.RESTORE_STATE,
-                    payload: { state: savedState },
-                });
-            } else {
-                console.log(`No session state found for project: ${projectId}, starting with fresh session`);
-            }
-        }).catch((error) => {
-            console.error('Failed to restore chat state:', error);
-        });
+        console.log('[AIChatStateMachine] Started; restoring state via Restoring state');
     },
     service: () => chatStateService,
     context: () => chatStateService.getSnapshot().context,
