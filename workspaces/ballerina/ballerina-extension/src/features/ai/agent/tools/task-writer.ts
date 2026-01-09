@@ -137,7 +137,7 @@ Rules:
         inputSchema: TaskWriteInputSchema,
         execute: async (input: TaskWriteInput): Promise<TaskWriteResult> => {
             try {
-                const generation = chatStateStorage.getGeneration(workspaceId, threadId, generationId);
+                const generation = await chatStateStorage.getGeneration(workspaceId, threadId, generationId);
                 const existingPlan = generation?.plan;
                 const allTasks = mapInputToTasks(input);
 
@@ -284,7 +284,7 @@ async function handlePlanApproval(
     const plan = createPlan(allTasks);
 
     // Store plan in ChatStateStorage with the generation
-    chatStateStorage.updateGeneration(workspaceId, threadId, generationId, { plan });
+    await chatStateStorage.updateGeneration(workspaceId, threadId, generationId, { plan });
 
     // Notify visualizer of plan update
     eventHandler({ type: 'plan_updated', plan });

@@ -267,12 +267,36 @@ async function updateCodeServerConfig() {
     await config.update('enableRunFast', true);
 }
 
-export function deactivate(): Thenable<void> | undefined {
-    debug('Deactive the Ballerina VS Code extension.');
+export async function deactivate(): Promise<void> {
+    debug('Deactivate the Ballerina VS Code extension.');
+
+    // FLUSH PENDING SAVES BEFORE DEACTIVATION
+    try {
+        await flushPendingSaves();
+    } catch (error) {
+        console.error('[Extension] Failed to flush pending saves on deactivation:', error);
+    }
 
     if (!langClient) {
         return;
     }
     extension.ballerinaExtInstance.telemetryReporter.dispose();
-    return langClient.stop();
+    await langClient.stop();
+}
+
+async function flushPendingSaves(): Promise<void> {
+    try {
+        const { chatStateStorage } = await import('./views/ai-panel/chatStateStorage');
+        const workspaceIds = chatStateStorage.getAllWorkspaceIds();
+
+        const savePromises = workspaceIds.map(id =>
+            chatStateStorage.saveWorkspace(id, true) // immediate = true
+        );
+
+        await Promise.all(savePromises);
+        console.log('[Extension] Flushed all pending chat state saves');
+    } catch (error) {
+        // Safe fail if module loading fails or something else goes wrong
+        console.error('[Extension] Error in flushPendingSaves:', error);
+    }
 }

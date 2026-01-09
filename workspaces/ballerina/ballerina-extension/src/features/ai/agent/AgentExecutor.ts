@@ -83,14 +83,14 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
             }
 
             // 3. Add generation to chat storage (if enabled)
-            this.addGeneration(params.usecase, {
+            await this.addGeneration(params.usecase, {
                 isPlanMode: params.isPlanMode,
                 operationType: params.operationType,
                 generationType: 'agent',
             });
 
             // 4. Get chat history from storage (if enabled)
-            const chatHistory = this.getChatHistory();
+            const chatHistory = await this.getChatHistory();
             console.log(`[AgentExecutor] Using ${chatHistory.length} chat history messages`);
 
             // 5. Build LLM messages with history
@@ -195,15 +195,15 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
                     // Update generation with partial messages
                     const workspaceId = this.config.executionContext.projectPath;
                     const threadId = 'default';
-                    chatStateStorage.updateGeneration(workspaceId, threadId, this.config.generationId, {
+                    await chatStateStorage.updateGeneration(workspaceId, threadId, this.config.generationId, {
                         modelMessages: messagesToSave,
                     });
 
                     // Clear review state
-                    const pendingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
+                    const pendingReview = await chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
                     if (pendingReview && pendingReview.id === this.config.generationId) {
                         console.log("[AgentExecutor] Clearing review state due to abort");
-                        chatStateStorage.declineAllReviews(workspaceId, threadId);
+                        await chatStateStorage.declineAllReviews(workspaceId, threadId);
                     }
 
                     // Note: Abort event is sent by base class handleExecutionError()
@@ -285,11 +285,11 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
         // Clear review state for this generation
         const workspaceId = context.ctx.projectPath;
         const threadId = 'default';
-        const pendingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
+        const pendingReview = await chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
 
         if (pendingReview && pendingReview.id === context.messageId) {
             console.log("[AgentExecutor] Clearing review state due to error");
-            chatStateStorage.updateReviewState(workspaceId, threadId, context.messageId, {
+            await chatStateStorage.updateReviewState(workspaceId, threadId, context.messageId, {
                 status: 'error',
                 errorMessage: getErrorMessage(error),
             });
@@ -336,7 +336,7 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
         const threadId = 'default';
 
         // Check if we're updating an existing review context
-        const existingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
+        const existingReview = await chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
         let accumulatedModifiedFiles = context.modifiedFiles;
 
         if (existingReview && existingReview.reviewState.tempProjectPath === tempProjectPath) {
@@ -348,7 +348,7 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
         }
 
         // Update chat state storage
-        chatStateStorage.updateGeneration(workspaceId, threadId, context.messageId, {
+        await chatStateStorage.updateGeneration(workspaceId, threadId, context.messageId, {
             modelMessages: assistantMessages,
         });
 
@@ -359,7 +359,7 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
         }
 
         // Update review state and open review mode
-        chatStateStorage.updateReviewState(workspaceId, threadId, context.messageId, {
+        await chatStateStorage.updateReviewState(workspaceId, threadId, context.messageId, {
             status: 'under_review',
             tempProjectPath,
             modifiedFiles: accumulatedModifiedFiles,

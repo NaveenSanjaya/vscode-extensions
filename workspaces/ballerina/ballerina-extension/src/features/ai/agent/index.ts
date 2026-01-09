@@ -73,7 +73,7 @@ export async function generateAgent(params: GenerateAgentCodeRequest): Promise<b
         // Check for pending review to reuse temp project path
         const workspaceId = StateMachine.context().projectPath;
         const threadId = params.threadId || 'default';
-        const pendingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
+        const pendingReview = await chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
 
         // Create config using factory function
         const config = createExecutorConfig(params, {

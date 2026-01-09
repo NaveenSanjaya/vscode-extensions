@@ -283,7 +283,11 @@ export abstract class AICommandExecutor<TParams = any> {
      * Get chat history from storage (helper for executors)
      * @returns Array of chat messages, or empty array if storage disabled
      */
-    protected getChatHistory(): any[] {
+    /**
+     * Get chat history from storage (helper for executors)
+     * @returns Array of chat messages, or empty array if storage disabled
+     */
+    protected async getChatHistory(): Promise<any[]> {
         const { workspaceId, threadId } = this.config.chatStorage;
         return chatStateStorage.getChatHistoryForLLM(workspaceId, threadId);
     }
@@ -293,7 +297,7 @@ export abstract class AICommandExecutor<TParams = any> {
      * @param userPrompt - User's prompt/request
      * @param metadata - Generation metadata (operation type, etc.)
      */
-    protected addGeneration(userPrompt: string, metadata: any): any {
+    protected async addGeneration(userPrompt: string, metadata: any): Promise<any> {
         const { workspaceId, threadId } = this.config.chatStorage;
         return chatStateStorage.addGeneration(
             workspaceId,

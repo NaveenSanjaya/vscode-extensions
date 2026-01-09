@@ -26,6 +26,7 @@ import {
 } from '@wso2/ballerina-core/lib/state-machine-types';
 import { Command } from '@wso2/ballerina-core';
 import * as crypto from 'crypto';
+import { JsonFileStorage } from './jsonFileStorage';
 
 /**
  * Active execution handle
@@ -41,14 +42,28 @@ export interface ActiveExecution {
  *
  * Single source of truth for all copilot chat state.
  * Stores workspace -> threads -> generations hierarchy.
- * Session-only storage (cleared when VSCode closes).
+ * Persists to disk via JsonFileStorage.
  */
 export class ChatStateStorage {
     // In-memory storage: workspaceId -> WorkspaceChatState
     private storage: Map<string, WorkspaceChatState> = new Map();
+    
+    // File storage persistence layer
+    private fileStorage = new JsonFileStorage();
 
     // Track active executions per workspace/thread for abort functionality
     private activeExecutions: Map<string, Map<string, ActiveExecution>> = new Map();
+
+    private persistCheckpoints: boolean = false;
+
+    /**
+     * Set checkpoint persistence preference
+     * @param enabled Whether to persist checkpoints
+     */
+    setPersistCheckpoints(enabled: boolean): void {
+        this.persistCheckpoints = enabled;
+        // Optionally trigger a save for all workspaces to update file content
+    }
 
     // ============================================
     // Workspace Management
@@ -56,37 +71,49 @@ export class ChatStateStorage {
 
     /**
      * Initialize workspace state (creates default thread if needed)
+     * Now ASYNC to support loading from disk
      * @param workspaceId Workspace identifier
      * @returns Workspace state
      */
-    initializeWorkspace(workspaceId: string): WorkspaceChatState {
+    async initializeWorkspace(workspaceId: string): Promise<WorkspaceChatState> {
         let workspaceState = this.storage.get(workspaceId);
 
         if (!workspaceState) {
-            // Create default thread
-            const defaultThread: ChatThread = {
-                id: 'default',
-                name: 'Default Thread',
-                generations: [],
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-            };
+            // Try to load from disk first
+            workspaceState = await this.fileStorage.loadWorkspace(workspaceId);
 
-            workspaceState = {
-                workspaceId,
-                threads: new Map([[defaultThread.id, defaultThread]]),
-                activeThreadId: defaultThread.id,
-            };
+            if (workspaceState) {
+                console.log(`[ChatStateStorage] Loaded workspace from disk: ${workspaceId}`);
+            } else {
+                // Create default thread if not found on disk
+                const defaultThread: ChatThread = {
+                    id: 'default',
+                    name: 'Default Thread',
+                    generations: [],
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                };
+
+                workspaceState = {
+                    workspaceId,
+                    threads: new Map([[defaultThread.id, defaultThread]]),
+                    activeThreadId: defaultThread.id,
+                };
+                console.log(`[ChatStateStorage] Initialized new workspace: ${workspaceId} with default thread`);
+                
+                // Save immediately to ensure file exists
+                this.saveWorkspace(workspaceId, true).catch(e => console.error(e));
+            }
 
             this.storage.set(workspaceId, workspaceState);
-            console.log(`[ChatStateStorage] Initialized workspace: ${workspaceId} with default thread`);
         }
 
         return workspaceState;
     }
 
     /**
-     * Get workspace state
+     * Get workspace state (synchronous, returns undefined if not initialized)
+     * Use initializeWorkspace for guaranteed return
      * @param workspaceId Workspace identifier
      * @returns Workspace state or undefined
      */
@@ -104,7 +131,7 @@ export class ChatStateStorage {
         const workspace = this.storage.get(workspaceId);
         if (workspace) {
             for (const [threadId, thread] of workspace.threads) {
-                const pendingReview = this.getPendingReviewGeneration(workspaceId, threadId);
+                const pendingReview = await this.getPendingReviewGeneration(workspaceId, threadId);
                 if (pendingReview?.reviewState.tempProjectPath) {
                     console.log(`[ChatStateStorage] Cleaning up pending review temp project: ${pendingReview.reviewState.tempProjectPath}`);
 
@@ -136,18 +163,31 @@ export class ChatStateStorage {
         console.log('[ChatStateStorage] Cleared all workspaces');
     }
 
+    /**
+     * Persist workspace state to disk
+     * @param workspaceId Workspace to save
+     * @param immediate Whether to save immediately (skip debounce)
+     */
+    async saveWorkspace(workspaceId: string, immediate: boolean = false): Promise<void> {
+        const state = this.storage.get(workspaceId);
+        if (state) {
+            await this.fileStorage.saveWorkspace(state, immediate);
+        }
+    }
+
     // ============================================
     // Thread Management (Minimal)
     // ============================================
 
     /**
      * Get or create a thread by ID
+     * NOW ASYNC
      * @param workspaceId Workspace identifier
      * @param threadId Thread identifier
      * @returns Thread
      */
-    getOrCreateThread(workspaceId: string, threadId: string): ChatThread {
-        const workspace = this.initializeWorkspace(workspaceId);
+    async getOrCreateThread(workspaceId: string, threadId: string): Promise<ChatThread> {
+        const workspace = await this.initializeWorkspace(workspaceId);
         let thread = workspace.threads.get(threadId);
 
         if (!thread) {
@@ -161,6 +201,8 @@ export class ChatStateStorage {
             workspace.threads.set(threadId, thread);
             workspace.activeThreadId = threadId;
             console.log(`[ChatStateStorage] Created thread: ${threadId} in workspace: ${workspaceId}`);
+            
+            this.saveWorkspace(workspaceId);
         }
 
         return thread;
@@ -168,11 +210,13 @@ export class ChatStateStorage {
 
     /**
      * Get active thread
+     * NOW ASYNC (to ensure workspace init)
      * @param workspaceId Workspace identifier
      * @returns Active thread or undefined
      */
-    getActiveThread(workspaceId: string): ChatThread | undefined {
-        const workspace = this.storage.get(workspaceId);
+    async getActiveThread(workspaceId: string): Promise<ChatThread | undefined> {
+        // Ensure workspace is initialized/loaded
+        const workspace = await this.initializeWorkspace(workspaceId);
         if (!workspace) {
             return undefined;
         }
@@ -192,14 +236,14 @@ export class ChatStateStorage {
      * @param id Optional generation ID (if not provided, generates new one)
      * @returns Created generation
      */
-    addGeneration(
+    async addGeneration(
         workspaceId: string,
         threadId: string,
         userPrompt: string,
         metadata: Partial<GenerationMetadata>,
         id?: string
-    ): Generation {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    ): Promise<Generation> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
 
         const generation: Generation = {
             id: id || this.generateId(),
@@ -224,6 +268,9 @@ export class ChatStateStorage {
         thread.updatedAt = Date.now();
 
         console.log(`[ChatStateStorage] Added generation: ${generation.id} to thread: ${threadId}`);
+
+        // Save to disk
+        this.saveWorkspace(workspaceId);
 
         // Capture checkpoint for this generation asynchronously
         this.captureCheckpointForGeneration(workspaceId, threadId, generation.id).catch(error => {
@@ -271,13 +318,13 @@ export class ChatStateStorage {
      * @param generationId Generation identifier
      * @param updates Partial updates to generation
      */
-    updateGeneration(
+    async updateGeneration(
         workspaceId: string,
         threadId: string,
         generationId: string,
         updates: Partial<Generation>
-    ): void {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    ): Promise<void> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
         const generation = thread.generations.find(g => g.id === generationId);
 
         if (!generation) {
@@ -290,6 +337,9 @@ export class ChatStateStorage {
         thread.updatedAt = Date.now();
 
         console.log(`[ChatStateStorage] Updated generation: ${generationId}`);
+        
+        // Save to disk
+        this.saveWorkspace(workspaceId);
     }
 
     /**
@@ -299,12 +349,12 @@ export class ChatStateStorage {
      * @param generationId Generation identifier
      * @returns Generation or undefined
      */
-    getGeneration(
+    async getGeneration(
         workspaceId: string,
         threadId: string,
         generationId: string
-    ): Generation | undefined {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    ): Promise<Generation | undefined> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
         return thread.generations.find(g => g.id === generationId);
     }
 
@@ -314,8 +364,8 @@ export class ChatStateStorage {
      * @param threadId Thread identifier
      * @returns Array of generations
      */
-    getGenerations(workspaceId: string, threadId: string): Generation[] {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    async getGenerations(workspaceId: string, threadId: string): Promise<Generation[]> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
         return thread.generations;
     }
 
@@ -330,8 +380,8 @@ export class ChatStateStorage {
      * @param threadId Thread identifier
      * @returns Array of model messages for LLM context
      */
-    getChatHistoryForLLM(workspaceId: string, threadId: string): any[] {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    async getChatHistoryForLLM(workspaceId: string, threadId: string): Promise<any[]> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
         const messages: any[] = [];
 
         for (const generation of thread.generations) {
@@ -354,11 +404,11 @@ export class ChatStateStorage {
      * @param threadId Thread identifier
      * @returns Generation or undefined
      */
-    getPendingReviewGeneration(
+    async getPendingReviewGeneration(
         workspaceId: string,
         threadId: string
-    ): Generation | undefined {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    ): Promise<Generation | undefined> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
 
         // Find the LATEST generation with 'under_review' status
         // Iterate in reverse to get the most recent one
@@ -381,13 +431,13 @@ export class ChatStateStorage {
      * @param generationId Generation identifier
      * @param state Review state updates
      */
-    updateReviewState(
+    async updateReviewState(
         workspaceId: string,
         threadId: string,
         generationId: string,
         state: Partial<GenerationReviewState>
-    ): void {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    ): Promise<void> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
         const generation = thread.generations.find(g => g.id === generationId);
 
         if (!generation) {
@@ -399,6 +449,9 @@ export class ChatStateStorage {
         thread.updatedAt = Date.now();
 
         console.log(`[ChatStateStorage] Updated review state for generation: ${generationId}, status: ${generation.reviewState.status}`);
+        
+        // Save to disk
+        this.saveWorkspace(workspaceId);
     }
 
     /**
@@ -407,8 +460,8 @@ export class ChatStateStorage {
      * @param workspaceId Workspace identifier
      * @param threadId Thread identifier
      */
-    acceptAllReviews(workspaceId: string, threadId: string): void {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    async acceptAllReviews(workspaceId: string, threadId: string): Promise<void> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
         let count = 0;
 
         for (const generation of thread.generations) {
@@ -420,6 +473,11 @@ export class ChatStateStorage {
 
         thread.updatedAt = Date.now();
         console.log(`[ChatStateStorage] Accepted ${count} review(s) in thread: ${threadId}`);
+        
+        // Save to disk
+        if (count > 0) {
+            this.saveWorkspace(workspaceId);
+        }
     }
 
     /**
@@ -428,8 +486,8 @@ export class ChatStateStorage {
      * @param workspaceId Workspace identifier
      * @param threadId Thread identifier
      */
-    declineAllReviews(workspaceId: string, threadId: string): void {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    async declineAllReviews(workspaceId: string, threadId: string): Promise<void> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
         let count = 0;
 
         for (const generation of thread.generations) {
@@ -442,6 +500,11 @@ export class ChatStateStorage {
 
         thread.updatedAt = Date.now();
         console.log(`[ChatStateStorage] Declined ${count} review(s) in thread: ${threadId}`);
+        
+        // Save to disk
+        if (count > 0) {
+            this.saveWorkspace(workspaceId);
+        }
     }
 
     // ============================================
@@ -454,8 +517,8 @@ export class ChatStateStorage {
      * @param threadId Thread identifier
      * @returns Array of checkpoints in chronological order
      */
-    getCheckpoints(workspaceId: string, threadId: string): Checkpoint[] {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    async getCheckpoints(workspaceId: string, threadId: string): Promise<Checkpoint[]> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
         const checkpoints: Checkpoint[] = [];
 
         for (const generation of thread.generations) {
@@ -474,12 +537,12 @@ export class ChatStateStorage {
      * @param checkpointId Checkpoint identifier
      * @returns Checkpoint and its generation, or undefined
      */
-    findCheckpoint(
+    async findCheckpoint(
         workspaceId: string,
         threadId: string,
         checkpointId: string
-    ): { checkpoint: Checkpoint; generation: Generation } | undefined {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    ): Promise<{ checkpoint: Checkpoint; generation: Generation } | undefined> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
 
         for (const generation of thread.generations) {
             if (generation.checkpoint?.id === checkpointId) {
@@ -503,7 +566,7 @@ export class ChatStateStorage {
         generationId: string,
         checkpoint: Checkpoint
     ): Promise<void> {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
         const generation = thread.generations.find(g => g.id === generationId);
 
         if (!generation) {
@@ -518,6 +581,9 @@ export class ChatStateStorage {
 
         // Enforce maxCount limit by removing oldest checkpoints
         await this.enforceCheckpointLimit(workspaceId, threadId);
+        
+        // Save to disk
+        this.saveWorkspace(workspaceId);
     }
 
     /**
@@ -534,7 +600,7 @@ export class ChatStateStorage {
             return;
         }
 
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
 
         // Collect all generations with checkpoints
         const generationsWithCheckpoints = thread.generations
@@ -568,12 +634,12 @@ export class ChatStateStorage {
      * @param checkpointId Checkpoint identifier
      * @returns true if restored, false if checkpoint not found
      */
-    restoreThreadToCheckpoint(
+    async restoreThreadToCheckpoint(
         workspaceId: string,
         threadId: string,
         checkpointId: string
-    ): boolean {
-        const thread = this.getOrCreateThread(workspaceId, threadId);
+    ): Promise<boolean> {
+        const thread = await this.getOrCreateThread(workspaceId, threadId);
 
         // Find the generation containing this checkpoint
         let checkpointGenerationIndex = -1;
@@ -594,6 +660,9 @@ export class ChatStateStorage {
         // This restores to the state BEFORE the user submitted this message
         thread.generations = thread.generations.slice(0, checkpointGenerationIndex);
         thread.updatedAt = Date.now();
+
+        // Save to disk
+        this.saveWorkspace(workspaceId);
 
         return true;
     }

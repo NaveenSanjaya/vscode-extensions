@@ -259,6 +259,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         const workspaceId = params?.workspaceId || StateMachine.context().projectPath;
         const threadId = params?.threadId || 'default';
 
+        // abortActiveExecution is synchronous
         const aborted = chatStateStorage.abortActiveExecution(workspaceId, threadId);
 
         if (aborted) {
@@ -404,7 +405,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
             const threadId = 'default';
 
             // Get ALL under_review generations
-            const thread = chatStateStorage.getOrCreateThread(workspaceId, threadId);
+            const thread = await chatStateStorage.getOrCreateThread(workspaceId, threadId);
             const underReviewGenerations = thread.generations.filter(
                 g => g.reviewState.status === 'under_review'
             );
@@ -439,7 +440,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
             }
 
             // Mark ALL under_review generations as accepted
-            chatStateStorage.acceptAllReviews(workspaceId, threadId);
+            await chatStateStorage.acceptAllReviews(workspaceId, threadId);
             console.log("[Review Actions] Marked all under_review generations as accepted");
 
             // Notify AI panel webview to hide review actions
@@ -461,7 +462,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
             const threadId = 'default';
 
             // Get ALL under_review generations
-            const thread = chatStateStorage.getOrCreateThread(workspaceId, threadId);
+            const thread = await chatStateStorage.getOrCreateThread(workspaceId, threadId);
             const underReviewGenerations = thread.generations.filter(
                 g => g.reviewState.status === 'under_review'
             );
@@ -483,7 +484,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
             }
 
             // Mark ALL under_review generations as error/declined
-            chatStateStorage.declineAllReviews(workspaceId, threadId);
+            await chatStateStorage.declineAllReviews(workspaceId, threadId);
             console.log("[Review Actions] Marked all under_review generations as declined");
 
             // Notify AI panel webview to hide review actions
@@ -527,7 +528,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         const threadId = 'default';
 
         // Find the checkpoint
-        const found = chatStateStorage.findCheckpoint(workspaceId, threadId, params.checkpointId);
+        const found = await chatStateStorage.findCheckpoint(workspaceId, threadId, params.checkpointId);
 
         if (!found) {
             throw new Error(`Checkpoint ${params.checkpointId} not found`);
@@ -539,7 +540,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         await restoreWorkspaceSnapshot(checkpoint);
 
         // 2. Truncate thread history to this checkpoint
-        const restored = chatStateStorage.restoreThreadToCheckpoint(
+        const restored = await chatStateStorage.restoreThreadToCheckpoint(
             workspaceId,
             threadId,
             params.checkpointId
@@ -566,7 +567,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
 
         // The messageId is actually a generation ID
         // This is called when streaming completes to save the final UI-formatted response
-        const generation = chatStateStorage.getGeneration(workspaceId, threadId, params.messageId);
+        const generation = await chatStateStorage.getGeneration(workspaceId, threadId, params.messageId);
 
         if (!generation) {
             console.warn(`[RPC] Generation ${params.messageId} not found in thread ${threadId}`);
@@ -574,7 +575,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         }
 
         // Update the UI response with the final formatted content
-        chatStateStorage.updateGeneration(workspaceId, threadId, params.messageId, {
+        await chatStateStorage.updateGeneration(workspaceId, threadId, params.messageId, {
             uiResponse: params.content
         });
 
@@ -587,7 +588,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         const threadId = 'default';
 
         // Get all generations from chat storage
-        const generations = chatStateStorage.getGenerations(workspaceId, threadId);
+        const generations = await chatStateStorage.getGenerations(workspaceId, threadId);
 
         // Convert generations to UI messages format
         const uiMessages: UIChatMessage[] = [];
@@ -619,7 +620,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         const threadId = 'default';
 
         // Get checkpoints from ChatStateStorage
-        const checkpoints = chatStateStorage.getCheckpoints(workspaceId, threadId);
+        const checkpoints = await chatStateStorage.getCheckpoints(workspaceId, threadId);
 
         // Convert to CheckpointInfo format
         return checkpoints.map(cp => ({
@@ -636,7 +637,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         const threadId = 'default';
 
         // Always get tempProjectPath from active generation in chatStateStorage
-        const pendingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
+        const pendingReview = await chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
         if (!pendingReview || !pendingReview.reviewState.tempProjectPath) {
             console.log(">>> no pending review or temp project path found for semantic diff");
             return undefined;
