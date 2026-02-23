@@ -344,7 +344,10 @@ export type ChatNotify =
     | ConnectorGenerationNotification
     | ConfigurationCollectionEvent
     | CodeReviewActions
-    | PlanUpdated;
+    | PlanUpdated
+    | ReasoningStart
+    | ReasoningDelta
+    | ReasoningEnd;
 
 export interface ChatStart {
     type: "start";
@@ -489,6 +492,19 @@ export interface CodeReviewActions {
 export interface PlanUpdated {
     type: "plan_updated";
     plan: Plan;
+}
+
+export interface ReasoningStart {
+    type: "reasoning_start";
+}
+
+export interface ReasoningDelta {
+    type: "reasoning_delta";
+    content: string;
+}
+
+export interface ReasoningEnd {
+    type: "reasoning_end";
 }
 
 export const stateChanged: NotificationType<MachineStateValue> = { method: 'stateChanged' };

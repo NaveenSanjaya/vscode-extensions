@@ -298,6 +298,21 @@ export function sendConfigurationCollectionNotification(event: ChatNotify & { ty
     sendAIPanelNotification(event);
 }
 
+export function sendReasoningStartNotification(): void {
+    const msg: ChatNotify = { type: "reasoning_start" };
+    sendAIPanelNotification(msg);
+}
+
+export function sendReasoningDeltaNotification(content: string): void {
+    const msg: ChatNotify = { type: "reasoning_delta", content };
+    sendAIPanelNotification(msg);
+}
+
+export function sendReasoningEndNotification(): void {
+    const msg: ChatNotify = { type: "reasoning_end" };
+    sendAIPanelNotification(msg);
+}
+
 function sendAIPanelNotification(msg: ChatNotify): void {
     RPCLayer._messenger.sendNotification(onChatNotify, { type: "webview", webviewType: AiPanelWebview.viewType }, msg);
 }

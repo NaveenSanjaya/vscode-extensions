@@ -82,6 +82,7 @@ import FeedbackBar from "./../FeedbackBar";
 import { useFeedback } from "./utils/useFeedback";
 import { SegmentType, splitContent } from "./segment";
 import ReviewActions from "../ReviewActions";
+import ThinkingSegment from "../ThinkingSegment";
 
 const NO_DRIFT_FOUND = "No drift identified between the code and the documentation.";
 const DRIFT_CHECK_ERROR = "Failed to check drift between the code and the documentation. Please try again.";
@@ -717,6 +718,12 @@ const AIChat: React.FC = () => {
                 }
                 return newMessages;
             });
+        } else if (type === "reasoning_start") {
+            updateLastMessage((content) => content + `\n\n<thinking>`);
+        } else if (type === "reasoning_delta") {
+            updateLastMessage((content) => content + response.content);
+        } else if (type === "reasoning_end") {
+            updateLastMessage((content) => content + `</thinking>`);
         } else if (type === "diagnostics") {
             //TODO: Handle this in review mode
             const content = response.diagnostics;
@@ -1658,6 +1665,14 @@ const AIChat: React.FC = () => {
                                                     key={`review-actions-${i}`}
                                                     rpcClient={rpcClient}
                                                     onReviewActionsChange={setShowReviewActions}
+                                                />
+                                            );
+                                        } else if (segment.type === SegmentType.Thinking) {
+                                            return (
+                                                <ThinkingSegment
+                                                    key={`thinking-${i}`}
+                                                    text={segment.text}
+                                                    loading={segment.loading}
                                                 />
                                             );
                                         } else if (segment.type === SegmentType.Attachment) {

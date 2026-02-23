@@ -13,6 +13,7 @@ export enum SegmentType {
     SpecFetcher = "SpecFetcher",
     ConfigurationCollector = "ConfigurationCollector",
     ReviewActions = "ReviewActions",
+    Thinking = "Thinking",
 }
 
 interface Segment {
@@ -39,6 +40,27 @@ function splitHalfGeneratedCode(content: string): Segment[] {
     // Regex to capture filename and optional test attribute
     // Using matchAll for stateless iteration to avoid regex lastIndex corruption during streaming
     const regexPattern = /<code\s+filename="([^"]+)"(?:\s+type=("test"|"ai_map"|"type_creator"))?>\s*```(\w+)\s*([\s\S]*?)$/g;
+
+    // Check for half-generated <thinking> tag (opened but not closed)
+    const thinkingPattern = /<thinking>([\s\S]*?)$/;
+    const thinkingMatch = content.match(thinkingPattern);
+
+    if (thinkingMatch && !content.includes('</thinking>')) {
+        const beforeThinking = content.slice(0, thinkingMatch.index);
+        if (beforeThinking.trim()) {
+            segments.push({
+                type: SegmentType.Text,
+                loading: false,
+                text: beforeThinking,
+            });
+        }
+        segments.push({
+            type: SegmentType.Thinking,
+            loading: true,
+            text: thinkingMatch[1],
+        });
+        return segments;
+    }
 
     // Convert to array to avoid stateful regex iteration issues
     const matches = Array.from(content.matchAll(regexPattern));
@@ -87,7 +109,7 @@ export function splitContent(content: string): Segment[] {
     // Combined regex to capture either <code ...>```<language> code ```</code> or <progress>Text</progress>
     // Using matchAll for stateless iteration to avoid regex lastIndex corruption during streaming
     const regexPattern =
-        /<code\s+filename="([^"]+)"(?:\s+type=("test"|"ai_map"|"type_creator"))?>\s*```(\w+)\s*([\s\S]*?)```\s*<\/code>|<progress>([\s\S]*?)<\/progress>|<toolcall(?:\s+[^>]*)?>([\s\S]*?)<\/toolcall>|<toolresult(?:\s+[^>]*)?>([\s\S]*?)<\/toolresult>|<todo>([\s\S]*?)<\/todo>|<attachment>([\s\S]*?)<\/attachment>|<scenario>([\s\S]*?)<\/scenario>|<button\s+type="([^"]+)">([\s\S]*?)<\/button>|<inlineCode>([\s\S]*?)<inlineCode>|<references>([\s\S]*?)<references>|<connectorgenerator>([\s\S]*?)<\/connectorgenerator>|<reviewactions>([\s\S]*?)<\/reviewactions>|<configurationcollector>([\s\S]*?)<\/configurationcollector>/g;
+        /<code\s+filename="([^"]+)"(?:\s+type=("test"|"ai_map"|"type_creator"))?>\s*```(\w+)\s*([\s\S]*?)```\s*<\/code>|<progress>([\s\S]*?)<\/progress>|<toolcall(?:\s+[^>]*)?>([\s\S]*?)<\/toolcall>|<toolresult(?:\s+[^>]*)?>([\s\S]*?)<\/toolresult>|<todo>([\s\S]*?)<\/todo>|<attachment>([\s\S]*?)<\/attachment>|<scenario>([\s\S]*?)<\/scenario>|<button\s+type="([^"]+)">([\s\S]*?)<\/button>|<inlineCode>([\s\S]*?)<inlineCode>|<references>([\s\S]*?)<references>|<connectorgenerator>([\s\S]*?)<\/connectorgenerator>|<reviewactions>([\s\S]*?)<\/reviewactions>|<configurationcollector>([\s\S]*?)<\/configurationcollector>|<thinking>([\s\S]*?)<\/thinking>/g;
 
     // Convert to array to avoid stateful regex iteration issues
     const matches = Array.from(content.matchAll(regexPattern));
@@ -269,6 +291,14 @@ export function splitContent(content: string): Segment[] {
             } catch (error) {
                 console.error("Failed to parse configuration collector data:", error);
             }
+        } else if (match[18] !== undefined) {
+            // <thinking> block matched
+            updateLastProgressSegmentLoading();
+            segments.push({
+                type: SegmentType.Thinking,
+                loading: false,
+                text: match[18],
+            });
         }
 
         // Update lastIndex to the end of the current match
