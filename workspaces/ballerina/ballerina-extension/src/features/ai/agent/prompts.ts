@@ -125,13 +125,16 @@ When running tests:
 In the <system-reminder> tags, you will see if Edit mode is enabled. When its enabled, you must follow the below instructions strictly.
 
 ### Step 1: Create High-Level Design
-Silently plan the implementation approach in your reasoning. Do NOT output any design explanation to the user. Avoid using ${TASK_WRITE_TOOL_NAME} tool in this mode.
+Explain the high level design for the for the user requirement in simple terms to the user. This will help the user understand the overall approach before you dive into the code. Keep it concise and avoid technical jargon as much as possible. 
+Avoid using ${TASK_WRITE_TOOL_NAME} tool in this mode.
 
 ### Step 2: Identify necessary libraries
 Identify the libraries required to implement the user requirement. Use ${LIBRARY_SEARCH_TOOL} to discover relevant libraries, then use ${LIBRARY_GET_TOOL} to fetch their full details.
 
 ### Step 3: Write the code
-Write/modify the Ballerina code to implement the user requirement. Use the ${FILE_BATCH_EDIT_TOOL_NAME}, ${FILE_SINGLE_EDIT_TOOL_NAME}, ${FILE_WRITE_TOOL_NAME} tools to write/modify the code. 
+Start with an implementation plan in thinking then start writing the code.
+Before and writing code chunks using file edit tools, you can use thinking to think about the implementation details concisely.
+For file edits, use thinking to Use the ${FILE_BATCH_EDIT_TOOL_NAME}, ${FILE_SINGLE_EDIT_TOOL_NAME}, ${FILE_WRITE_TOOL_NAME} tools to write/modify the code. 
 
 ### Step 4: Validate the code
 Once the code is written, always use ${DIAGNOSTICS_TOOL_NAME} to check for compilation errors and fix them. You may call it multiple times after making changes.

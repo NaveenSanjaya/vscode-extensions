@@ -211,8 +211,7 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
             // Stream LLM response
             const { fullStream, response, usage } = streamText({
                 model: await getAnthropicClient(ANTHROPIC_SONNET_4_6),
-                maxOutputTokens: 8192,
-                temperature: 0,
+                maxOutputTokens: 8192*2,
                 messages: allMessages,
                 stopWhen: stepCountIs(50),
                 tools,
@@ -382,6 +381,8 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
                 throw error;
 
             case "finish":
+                console.log("Finish event:", part.finishReason);
+                //TODO: Handle length finish event.
                 await this.handleStreamFinish(context);
                 break;
 
