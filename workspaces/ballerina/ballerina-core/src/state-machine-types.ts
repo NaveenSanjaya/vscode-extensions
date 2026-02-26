@@ -57,6 +57,7 @@ export enum SCOPE {
     EVENT_INTEGRATION = "event-integration",
     FILE_INTEGRATION = "file-integration",
     AI_AGENT = "ai-agent",
+    LIBRARY = "library",
     ANY = "any"
 }
 
@@ -175,6 +176,7 @@ export interface ConfigurationCollectorMetadata {
         name: string;
         description: string;
         type?: "string" | "int";
+        secret?: boolean;
     }>;
     existingValues?: Record<string, string>;
     message: string;
@@ -342,7 +344,10 @@ export type ChatNotify =
     | ConnectorGenerationNotification
     | ConfigurationCollectionEvent
     | CodeReviewActions
-    | PlanUpdated;
+    | PlanUpdated
+    | ReasoningStart
+    | ReasoningDelta
+    | ReasoningEnd;
 
 export interface ChatStart {
     type: "start";
@@ -469,6 +474,7 @@ export interface ConfigurationCollectionEvent {
         name: string;
         description: string;
         type?: "string" | "int";
+        secret?: boolean;
     }>;
     existingValues?: Record<string, string>;
     message: string;
@@ -486,6 +492,19 @@ export interface CodeReviewActions {
 export interface PlanUpdated {
     type: "plan_updated";
     plan: Plan;
+}
+
+export interface ReasoningStart {
+    type: "reasoning_start";
+}
+
+export interface ReasoningDelta {
+    type: "reasoning_delta";
+    content: string;
+}
+
+export interface ReasoningEnd {
+    type: "reasoning_end";
 }
 
 export const stateChanged: NotificationType<MachineStateValue> = { method: 'stateChanged' };
@@ -517,7 +536,7 @@ export const approvalOverlayState: NotificationType<ApprovalOverlayState> = { me
 export type AIMachineStateValue =
     | 'Initialize'          // (checking auth, first load)
     | 'Unauthenticated'     // (show login window)
-    | { Authenticating: 'determineFlow' | 'ssoFlow' | 'apiKeyFlow' | 'validatingApiKey' | 'awsBedrockFlow' | 'validatingAwsCredentials' } // hierarchical substates
+    | { Authenticating: 'determineFlow' | 'ssoFlow' | 'apiKeyFlow' | 'validatingApiKey' | 'awsBedrockFlow' | 'validatingAwsCredentials' | 'vertexAiFlow' | 'validatingVertexAiCredentials' } // hierarchical substates
     | 'Authenticated'       // (ready, main view)
     | 'Disabled';           // (optional: if AI Chat is globally unavailable)
 
@@ -528,6 +547,8 @@ export enum AIMachineEventType {
     SUBMIT_API_KEY = 'SUBMIT_API_KEY',
     AUTH_WITH_AWS_BEDROCK = 'AUTH_WITH_AWS_BEDROCK',
     SUBMIT_AWS_CREDENTIALS = 'SUBMIT_AWS_CREDENTIALS',
+    AUTH_WITH_VERTEX_AI = 'AUTH_WITH_VERTEX_AI',
+    SUBMIT_VERTEX_AI_CREDENTIALS = 'SUBMIT_VERTEX_AI_CREDENTIALS',
     LOGOUT = 'LOGOUT',
     SILENT_LOGOUT = "SILENT_LOGOUT",
     COMPLETE_AUTH = 'COMPLETE_AUTH',
@@ -547,6 +568,13 @@ export type AIMachineEventMap = {
         secretAccessKey: string;
         region: string;
         sessionToken?: string;
+    };
+    [AIMachineEventType.AUTH_WITH_VERTEX_AI]: undefined;
+    [AIMachineEventType.SUBMIT_VERTEX_AI_CREDENTIALS]: {
+        projectId: string;
+        location: string;
+        clientEmail: string;
+        privateKey: string;
     };
     [AIMachineEventType.LOGOUT]: undefined;
     [AIMachineEventType.SILENT_LOGOUT]: undefined;
@@ -691,7 +719,8 @@ export enum TaskStatus {
 export enum TaskTypes {
     SERVICE_DESIGN = "service_design",
     CONNECTIONS_INIT = "connections_init",
-    IMPLEMENTATION = "implementation"
+    IMPLEMENTATION = "implementation",
+    TESTING = "testing"
 }
 
 /**
@@ -727,22 +756,17 @@ export type OperationType = "CODE_FOR_USER_REQUIREMENT" | "TESTS_FOR_USER_REQUIR
 export enum LoginMethod {
     BI_INTEL = 'biIntel',
     ANTHROPIC_KEY = 'anthropic_key',
-    DEVANT_ENV = 'devant_env',
-    AWS_BEDROCK = 'aws_bedrock'
+    AWS_BEDROCK = 'aws_bedrock',
+    VERTEX_AI = 'vertex_ai'
 }
 
 export interface BIIntelSecrets {
     accessToken: string;
-    refreshToken: string;
+    expiresAt?: number;  // Unix timestamp in milliseconds
 }
 
 export interface AnthropicKeySecrets {
     apiKey: string;
-}
-
-export interface DevantEnvSecrets {
-    accessToken: string;
-    expiresAt: number;
 }
 
 interface AwsBedrockSecrets {
@@ -750,6 +774,13 @@ interface AwsBedrockSecrets {
     secretAccessKey: string;
     region: string;
     sessionToken?: string;
+}
+
+export interface VertexAiSecrets {
+    projectId: string;
+    location: string;
+    clientEmail: string;
+    privateKey: string;
 }
 
 export type AuthCredentials =
@@ -762,12 +793,12 @@ export type AuthCredentials =
         secrets: AnthropicKeySecrets;
     }
     | {
-        loginMethod: LoginMethod.DEVANT_ENV;
-        secrets: DevantEnvSecrets;
-    }
-    | {
         loginMethod: LoginMethod.AWS_BEDROCK;
         secrets: AwsBedrockSecrets;
+    }
+    | {
+        loginMethod: LoginMethod.VERTEX_AI;
+        secrets: VertexAiSecrets;
     };
 
 export interface AIUserToken {

@@ -19,7 +19,7 @@
 import { AICommandExecutor, AICommandConfig, AIExecutionResult } from '../executors/base/AICommandExecutor';
 import { Command, GenerateAgentCodeRequest, ProjectSource, MACHINE_VIEW, refreshReviewMode, ExecutionContext } from '@wso2/ballerina-core';
 import { ModelMessage, stepCountIs, streamText, TextStreamPart } from 'ai';
-import { getAnthropicClient, getProviderCacheControl, ANTHROPIC_SONNET_4 } from '../utils/ai-client';
+import { getAnthropicClient, getProviderCacheControl, ANTHROPIC_SONNET_4, ANTHROPIC_SONNET_4_6 } from '../utils/ai-client';
 import { populateHistoryForAgent, getErrorMessage } from '../utils/ai-utils';
 import { sendAgentDidOpenForFreshProjects } from '../utils/project/ls-schema-notifications';
 import { getSystemPrompt, getUserPrompt } from './prompts';
@@ -46,6 +46,7 @@ import { extension } from "../../../BalExtensionContext";
 import { getProjectMetrics } from "../../telemetry/common/project-metrics";
 import { getHashedProjectId } from "../../telemetry/common/project-id";
 import { workspace } from 'vscode';
+import { AnthropicLanguageModelOptions } from '@ai-sdk/anthropic';
 
 /**
  * Determines which packages have been affected by analyzing modified files
@@ -209,13 +210,17 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
 
             // Stream LLM response
             const { fullStream, response, usage } = streamText({
-                model: await getAnthropicClient(ANTHROPIC_SONNET_4),
-                maxOutputTokens: 8192,
-                temperature: 0,
+                model: await getAnthropicClient(ANTHROPIC_SONNET_4_6),
+                maxOutputTokens: 8192*2,
                 messages: allMessages,
                 stopWhen: stepCountIs(50),
                 tools,
                 abortSignal: this.config.abortController.signal,
+                providerOptions: {
+                    anthropic: {
+                        thinking: { type: 'adaptive' },
+                    } satisfies AnthropicLanguageModelOptions,
+                }
             });
 
             // Send start event to frontend
@@ -325,6 +330,7 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
                 type: "error",
                 content: "An error occurred during agent execution. Please check the logs for details."
             });
+            console.log(error);
 
             // For other errors, return result with error
             return {
@@ -357,12 +363,26 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
                 });
                 break;
 
+            case "reasoning-start":
+                context.eventHandler({ type: "reasoning_start" });
+                break;
+
+            case "reasoning-delta":
+                context.eventHandler({ type: "reasoning_delta", content: part.text });
+                break;
+
+            case "reasoning-end":
+                context.eventHandler({ type: "reasoning_end" });
+                break;
+
             case "error":
                 const error = part.error instanceof Error ? part.error : new Error(String(part.error));
                 await this.handleStreamError(error, context);
                 throw error;
 
             case "finish":
+                console.log("Finish event:", part.finishReason);
+                //TODO: Handle length finish event.
                 await this.handleStreamFinish(context);
                 break;
 
