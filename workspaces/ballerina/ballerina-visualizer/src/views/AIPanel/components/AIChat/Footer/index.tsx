@@ -27,6 +27,7 @@ import { AttachmentOptions } from "../../AIChatInput/hooks/useAttachments";
 import { getTemplateTextById } from "../../../commandTemplates/utils/utils";
 import CodeContextCard from "../../CodeContextCard";
 import { AgentMode } from "../../AIChatInput/ModeToggle";
+import { useContextUsage } from "../../ContextUsageIndicator/useContextUsage";
 
 export const FooterContainer = styled.footer({
     padding: "20px",
@@ -92,11 +93,10 @@ const renderPrompt = (item: AIPanelPrompt, index: number, aiChatInputRef: React.
 
     switch (item.type) {
         case "command-template":
-            text = `${item.command} ${
-                item.templateId === TemplateId.Wildcard
-                    ? item.text
-                    : getTemplateTextById(commandTemplates, item.command, item.templateId)
-            }`;
+            text = `${item.command} ${item.templateId === TemplateId.Wildcard
+                ? item.text
+                : getTemplateTextById(commandTemplates, item.command, item.templateId)
+                }`;
             break;
         case "text":
             text = item.text;
@@ -134,6 +134,7 @@ type FooterProps = {
     onChangeAgentMode?: (mode: AgentMode) => void;
     isAutoApproveEnabled?: boolean;
     onDisableAutoApprove?: () => void;
+    messageCount: number;
 };
 
 const Footer: React.FC<FooterProps> = ({
@@ -151,8 +152,10 @@ const Footer: React.FC<FooterProps> = ({
     onChangeAgentMode,
     isAutoApproveEnabled,
     onDisableAutoApprove,
+    messageCount,
 }) => {
     const [generatingText, setGeneratingText] = useState("Generating.");
+    const { contextUsage } = useContextUsage(messageCount, isLoading);
 
     useEffect(() => {
         if (isLoading) {
@@ -200,6 +203,7 @@ const Footer: React.FC<FooterProps> = ({
                 onChangeAgentMode={onChangeAgentMode}
                 isAutoApproveEnabled={isAutoApproveEnabled}
                 onDisableAutoApprove={onDisableAutoApprove}
+                contextUsage={contextUsage}
             />
         </FooterContainer>
     );

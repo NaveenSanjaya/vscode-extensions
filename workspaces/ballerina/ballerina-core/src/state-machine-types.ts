@@ -347,7 +347,10 @@ export type ChatNotify =
     | PlanUpdated
     | ReasoningStart
     | ReasoningDelta
-    | ReasoningEnd;
+    | ReasoningEnd
+    | CompactionStart
+    | CompactionDelta
+    | CompactionEnd;
 
 export interface ChatStart {
     type: "start";
@@ -505,6 +508,19 @@ export interface ReasoningDelta {
 
 export interface ReasoningEnd {
     type: "reasoning_end";
+}
+
+export interface CompactionStart {
+    type: "compaction_start";
+}
+
+export interface CompactionDelta {
+    type: "compaction_delta";
+    content: string;
+}
+
+export interface CompactionEnd {
+    type: "compaction_end";
 }
 
 export const stateChanged: NotificationType<MachineStateValue> = { method: 'stateChanged' };
@@ -673,6 +689,8 @@ export interface Generation {
     codeContext?: CodeContext;
     /** Generation metadata */
     metadata: GenerationMetadata;
+    /** Total input tokens used in this generation (for auto-compaction) */
+    totalInputTokens?: number;
 }
 
 /**

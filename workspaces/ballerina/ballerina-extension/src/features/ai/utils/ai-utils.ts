@@ -32,6 +32,7 @@ import {
     HttpPayloadContext,
     MessageQueuePayloadContext,
     FileAttatchment,
+    UsageMetricsEvent,
     OperationType,
     Protocol
 } from "@wso2/ballerina-core";
@@ -310,6 +311,30 @@ export function sendReasoningDeltaNotification(content: string): void {
 
 export function sendReasoningEndNotification(): void {
     const msg: ChatNotify = { type: "reasoning_end" };
+    sendAIPanelNotification(msg);
+}
+
+export function sendCompactionStartNotification(): void {
+    const msg: ChatNotify = { type: "compaction_start" };
+    sendAIPanelNotification(msg);
+}
+
+export function sendCompactionDeltaNotification(content: string): void {
+    const msg: ChatNotify = { type: "compaction_delta", content };
+    sendAIPanelNotification(msg);
+}
+
+export function sendCompactionEndNotification(): void {
+    const msg: ChatNotify = { type: "compaction_end" };
+    sendAIPanelNotification(msg);
+}
+
+export function sendUsageMetricsNotification(usage: UsageMetricsEvent["usage"], isRepair?: boolean): void {
+    const msg: UsageMetricsEvent = {
+        type: "usage_metrics",
+        usage,
+        ...(isRepair !== undefined ? { isRepair } : {}),
+    };
     sendAIPanelNotification(msg);
 }
 

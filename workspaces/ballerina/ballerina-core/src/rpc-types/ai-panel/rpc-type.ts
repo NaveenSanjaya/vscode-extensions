@@ -46,6 +46,7 @@ import {
     UIChatMessage,
     CheckpointInfo,
     AbortAIGenerationRequest,
+    ContextUsageInfo,
 } from "./interfaces";
 import { RequestType, NotificationType } from "vscode-messenger-common";
 
@@ -90,9 +91,10 @@ export const provideConnectorSpec: RequestType<ConnectorSpecRequest, void> = { m
 export const cancelConnectorSpec: RequestType<ConnectorSpecCancelRequest, void> = { method: `${_preFix}/cancelConnectorSpec` };
 export const provideConfiguration: RequestType<ConfigurationProvideRequest, void> = { method: `${_preFix}/provideConfiguration` };
 export const cancelConfiguration: RequestType<ConfigurationCancelRequest, void> = { method: `${_preFix}/cancelConfiguration` };
-export const getChatMessages: NotificationType<void> = { method: `${_preFix}/getChatMessages` };
-export const getCheckpoints: NotificationType<void> = { method: `${_preFix}/getCheckpoints` };
+export const getChatMessages: RequestType<void, UIChatMessage[]> = { method: `${_preFix}/getChatMessages` };
+export const getCheckpoints: RequestType<void, CheckpointInfo[]> = { method: `${_preFix}/getCheckpoints` };
 export const restoreCheckpoint: RequestType<RestoreCheckpointRequest, void> = { method: `${_preFix}/restoreCheckpoint` };
 export const clearChat: RequestType<void, void> = { method: `${_preFix}/clearChat` };
 export const updateChatMessage: RequestType<UpdateChatMessageRequest, void> = { method: `${_preFix}/updateChatMessage` };
 export const getActiveTempDir: RequestType<void, string> = { method: `${_preFix}/getActiveTempDir` };
+export const getContextUsage: RequestType<void, ContextUsageInfo | null> = { method: `${_preFix}/getContextUsage` };

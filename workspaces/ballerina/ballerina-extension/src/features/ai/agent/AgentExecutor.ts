@@ -47,6 +47,7 @@ import { getProjectMetrics } from "../../telemetry/common/project-metrics";
 import { getHashedProjectId } from "../../telemetry/common/project-id";
 import { workspace } from 'vscode';
 import { AnthropicLanguageModelOptions } from '@ai-sdk/anthropic';
+import { isCompactionPart, wasCompactionApplied, getCompactionDetails } from './compact/native';
 
 /**
  * Determines which packages have been affected by analyzing modified files
@@ -128,6 +129,10 @@ function determineAffectedPackages(
  * - Plan approval workflow (via ApprovalManager in TaskWrite tool)
  */
 export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
+    private lastUsageMetricsSignature?: string;
+    private isReceivingCompactionSummary = false;
+    private compactionSummaryBuffer = '';
+
     constructor(config: AICommandConfig<GenerateAgentCodeRequest>) {
         super(config);
     }
@@ -151,6 +156,7 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
         const modifiedFiles: string[] = [];
         const generationStartTime = Date.now();
         const projectId = await getHashedProjectId(this.config.executionContext.projectPath);
+        this.lastUsageMetricsSignature = undefined;
 
         try {
             // 1. Get project sources from temp directory
@@ -205,13 +211,14 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
                 generationType: GenerationType.CODE_GENERATION,
                 workspaceId: this.config.executionContext.projectPath,
                 generationId: this.config.generationId,
-                threadId: 'default',
+                threadId: this.config.chatStorage?.threadId || 'default',
             });
 
-            // Stream LLM response
-            const { fullStream, response, usage } = streamText({
+            // Build streamText configuration
+            const streamTextConfig: any = {
                 model: await getAnthropicClient(ANTHROPIC_SONNET_4_6),
-                maxOutputTokens: 8192*2,
+                maxOutputTokens: 8192 * 2,
+                temperature: 0,
                 messages: allMessages,
                 stopWhen: stepCountIs(50),
                 tools,
@@ -221,7 +228,17 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
                         thinking: { type: 'adaptive' },
                     } satisfies AnthropicLanguageModelOptions,
                 }
-            });
+            };
+
+            // Add native compaction support if configured
+            if (this.config.contextManagement) {
+                console.log('[AgentExecutor] Using native compaction with config:', JSON.stringify(this.config.contextManagement, null, 2));
+                streamTextConfig.providerOptions.anthropic.contextManagement = this.config.contextManagement;
+                console.log('[AgentExecutor] Native compaction configured successfully');
+            }
+
+            // Stream LLM response
+            const { fullStream, response, usage } = streamText(streamTextConfig);
 
             // Send start event to frontend
             this.config.eventHandler({ type: "start" });
@@ -279,7 +296,7 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
 
                     // Update generation with user message + partial messages
                     const workspaceId = this.config.executionContext.projectPath;
-                    const threadId = 'default';
+                    const threadId = this.config.chatStorage?.threadId || 'default';
                     chatStateStorage.updateGeneration(workspaceId, threadId, this.config.generationId, {
                         modelMessages: [
                             { role: "user", content: streamContext.userMessageContent },
@@ -348,19 +365,39 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
         part: TextStreamPart<any>,
         context: StreamContext
     ): Promise<void> {
+        this.emitUsageMetricsFromPart(part, context);
+
         switch (part.type) {
             case "text-delta":
-                context.eventHandler({
-                    type: "content_block",
-                    content: part.text
-                });
+                if (this.isReceivingCompactionSummary) {
+                    // Accumulate for logging and stream delta to UI
+                    this.compactionSummaryBuffer += part.text;
+                    context.eventHandler({ type: "compaction_delta", content: part.text });
+                } else {
+                    context.eventHandler({
+                        type: "content_block",
+                        content: part.text
+                    });
+                }
                 break;
 
             case "text-start":
-                context.eventHandler({
-                    type: "content_block",
-                    content: " \n"
-                });
+                // Check if this is a native compaction event
+                if (isCompactionPart(part)) {
+                    console.log('[AgentExecutor] 🔄 Native compaction detected - streaming summary to UI');
+                    this.isReceivingCompactionSummary = true;
+                    this.compactionSummaryBuffer = '';
+                    context.eventHandler({ type: "compaction_start" });
+                } else {
+                    // If we were receiving compaction summary, finalize it
+                    if (this.isReceivingCompactionSummary) {
+                        this.finalizeCompactionSummary(context);
+                    }
+                    context.eventHandler({
+                        type: "content_block",
+                        content: " \n"
+                    });
+                }
                 break;
 
             case "reasoning-start":
@@ -383,6 +420,11 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
             case "finish":
                 console.log("Finish event:", part.finishReason);
                 //TODO: Handle length finish event.
+
+                // If we were receiving compaction summary, finalize it before finishing
+                if (this.isReceivingCompactionSummary) {
+                    this.finalizeCompactionSummary(context);
+                }
                 await this.handleStreamFinish(context);
                 break;
 
@@ -407,7 +449,7 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
 
         // Clear review state for this generation
         const workspaceId = context.ctx.projectPath;
-        const threadId = 'default';
+        const threadId = this.config.chatStorage?.threadId || 'default';
         const pendingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
 
         if (pendingReview && pendingReview.id === context.messageId) {
@@ -449,6 +491,9 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
     private async handleStreamFinish(context: StreamContext): Promise<void> {
         const finalResponse = await context.response;
         const assistantMessages = finalResponse.messages || [];
+
+        // Check for compaction in response metadata (native compaction)
+        this.detectAndLogCompaction(finalResponse);
         const tempProjectPath = context.ctx.tempProjectPath!;
 
         // Run final diagnostics
@@ -468,6 +513,16 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
         const inputTokens = tokenUsage.inputTokens || 0;
         const outputTokens = tokenUsage.outputTokens || 0;
         const totalTokens = tokenUsage.totalTokens || 0;
+
+        context.eventHandler({
+            type: "usage_metrics",
+            usage: {
+                inputTokens,
+                cacheCreationInputTokens: (tokenUsage as any).cacheCreationInputTokens || 0,
+                cacheReadInputTokens: (tokenUsage as any).cacheReadInputTokens || 0,
+                outputTokens,
+            },
+        });
 
         // Send telemetry for generation complete
         sendTelemetryEvent(
@@ -490,7 +545,7 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
         );
 
         // Update chat state storage
-        await this.updateChatState(context, assistantMessages, tempProjectPath);
+        await this.updateChatState(context, assistantMessages, tempProjectPath, inputTokens);
 
         // Emit UI events
         await this.emitReviewActions(context);
@@ -503,10 +558,11 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
     private async updateChatState(
         context: StreamContext,
         assistantMessages: any[],
-        tempProjectPath: string
+        tempProjectPath: string,
+        inputTokens: number
     ): Promise<void> {
         const workspaceId = context.ctx.projectPath;
-        const threadId = 'default';
+        const threadId = this.config.chatStorage?.threadId || 'default';
 
         // Check if we're updating an existing review context
         const existingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
@@ -527,6 +583,9 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
                 ...assistantMessages,
             ],
         });
+
+        // Save input tokens usage for context indicator and auto-compaction tracking
+        chatStateStorage.updateGenerationTokenUsage(workspaceId, threadId, context.messageId, inputTokens);
 
         // Skip review mode if no files were modified
         if (accumulatedModifiedFiles.length === 0) {
@@ -579,5 +638,61 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
 
     protected getCommandType(): Command {
         return Command.Agent;
+    }
+
+    private emitUsageMetricsFromPart(part: TextStreamPart<any>, context: StreamContext): void {
+        const partAny: any = part as any;
+        const usage = partAny?.usage || partAny?.totalUsage || partAny?.response?.usage;
+
+        if (!usage) {
+            return;
+        }
+
+        const inputTokens = Number(usage.inputTokens ?? usage.input_tokens ?? 0);
+        const cacheCreationInputTokens = Number(usage.cacheCreationInputTokens ?? usage.cache_creation_input_tokens ?? 0);
+        const cacheReadInputTokens = Number(usage.cacheReadInputTokens ?? usage.cache_read_input_tokens ?? 0);
+        const outputTokens = Number(usage.outputTokens ?? usage.output_tokens ?? 0);
+
+        const signature = `${inputTokens}:${cacheCreationInputTokens}:${cacheReadInputTokens}:${outputTokens}`;
+        if (this.lastUsageMetricsSignature === signature) {
+            return;
+        }
+
+        this.lastUsageMetricsSignature = signature;
+        context.eventHandler({
+            type: "usage_metrics",
+            usage: {
+                inputTokens,
+                cacheCreationInputTokens,
+                cacheReadInputTokens,
+                outputTokens,
+            },
+        });
+    }
+
+    /**
+     * Detects and logs compaction from response metadata (for native compaction)
+     */
+    private detectAndLogCompaction(response: any): void {
+        if (wasCompactionApplied(response)) {
+            const details = getCompactionDetails(response);
+            console.log('[AgentExecutor] 🔄 Native compaction was applied');
+            if (details?.clearedInputTokens) {
+                console.log(`[AgentExecutor] Cleared ${details.clearedInputTokens} input tokens`);
+            }
+        }
+    }
+
+    /**
+     * Finalizes compaction summary: logs to console and sends end event to UI
+     */
+    private finalizeCompactionSummary(context: StreamContext): void {
+        if (this.compactionSummaryBuffer.trim()) {
+            console.log('[AgentExecutor] ========== COMPACTION SUMMARY ==========');
+            console.log(this.compactionSummaryBuffer);
+            console.log('[AgentExecutor] ========================================');
+        }
+        context.eventHandler({ type: "compaction_end" });
+        this.isReceivingCompactionSummary = false;
     }
 }

@@ -39,6 +39,7 @@ import {
     declineChanges,
     declinePlan,
     declineTask,
+    getContextUsage,
     DocGenerationRequest,
     generateAgent,
     GenerateAgentCodeRequest,
@@ -136,5 +137,6 @@ export function registerAiPanelRpcHandlers(messenger: Messenger) {
     messenger.onRequest(restoreCheckpoint, (args: RestoreCheckpointRequest) => rpcManger.restoreCheckpoint(args));
     messenger.onRequest(clearChat, () => rpcManger.clearChat());
     messenger.onRequest(updateChatMessage, (args: UpdateChatMessageRequest) => rpcManger.updateChatMessage(args));
+    messenger.onRequest(getContextUsage, () => rpcManger.getContextUsage());
     messenger.onRequest(getActiveTempDir, () => rpcManger.getActiveTempDir());
 }

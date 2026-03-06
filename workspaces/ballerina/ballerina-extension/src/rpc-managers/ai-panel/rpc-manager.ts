@@ -41,7 +41,8 @@ import {
     SubmitFeedbackRequest,
     TestGenerationMentions,
     UIChatMessage,
-    UpdateChatMessageRequest
+    UpdateChatMessageRequest,
+    ContextUsageInfo,
 } from "@wso2/ballerina-core";
 import * as fs from 'fs';
 import path from "path";
@@ -67,8 +68,9 @@ import {
 } from "./constants";
 import { addToIntegration, cleanDiagnosticMessages, searchDocumentation } from "./utils";
 
-import { onHideReviewActions } from '@wso2/ballerina-core';
+import { onHideReviewActions, ChatNotify, onChatNotify } from '@wso2/ballerina-core';
 import { createExecutionContextFromStateMachine, createExecutorConfig, generateAgent } from '../../features/ai/agent/index';
+import { CLAUDE_CONTEXT_WINDOW, NATIVE_COMPACTION_TRIGGER } from '../../features/ai/agent/constants';
 import { integrateCodeToWorkspace } from "../../features/ai/agent/utils";
 import { WI_EXTENSION_ID } from "../../features/ai/constants";
 import { ContextTypesExecutor } from '../../features/ai/executors/datamapper/ContextTypesExecutor';
@@ -692,11 +694,33 @@ export class AiPanelRpcManager implements AIPanelAPI {
         const pendingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
         if (!pendingReview || !pendingReview.reviewState.tempProjectPath) {
             console.log(">>> no pending review or temp project path found for semantic diff");
-            return undefined;
+            return "";
         }
 
         const projectPath = pendingReview.reviewState.tempProjectPath;
         console.log(">>> active temp project path", projectPath);
         return projectPath;
+    }
+
+    async getContextUsage(): Promise<ContextUsageInfo | null> {
+        const workspaceId = StateMachine.context().projectPath;
+        const threadId = 'default';
+
+        const tokensUsed = chatStateStorage.getLastTokenUsage(workspaceId, threadId);
+
+        if (tokensUsed === undefined) {
+            return null; // No token data available yet
+        }
+
+        const maxTokens = CLAUDE_CONTEXT_WINDOW;
+        const percentage = tokensUsed / maxTokens;
+
+        return {
+            tokensUsed,
+            maxTokens,
+            percentage,
+            willAutoCompact: tokensUsed >= NATIVE_COMPACTION_TRIGGER,
+            compactionTriggerTokens: NATIVE_COMPACTION_TRIGGER,
+        };
     }
 }

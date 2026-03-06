@@ -25,10 +25,13 @@ import { AIMachineEventType, AnthropicKeySecrets, LoginMethod, BIIntelSecrets } 
 
 export const ANTHROPIC_HAIKU = "claude-haiku-4-5-20251001";
 export const ANTHROPIC_SONNET_4 = "claude-sonnet-4-5-20250929";
+export const ANTHROPIC_OPUS_4_6 = "claude-opus-4-6";
 export const ANTHROPIC_SONNET_4_6 = "claude-sonnet-4-6";
+
 type AnthropicModel =
     | typeof ANTHROPIC_HAIKU
     | typeof ANTHROPIC_SONNET_4
+    | typeof ANTHROPIC_OPUS_4_6
     | typeof ANTHROPIC_SONNET_4_6;
 
 /**
@@ -38,7 +41,7 @@ type AnthropicModel =
  */
 export function getBedrockRegionalPrefix(region: string): string {
     const regionPrefix = region.split('-')[0].toLowerCase();
-    
+
     switch (regionPrefix) {
         case 'us':
             return region.startsWith('us-gov-') ? 'us-gov' : 'us';
@@ -179,30 +182,31 @@ export const getAnthropicClient = async (model: AnthropicModel): Promise<any> =>
             if (!awsCredentials) {
                 throw new Error('AWS Bedrock credentials not found');
             }
-            
+
             const bedrock = createAmazonBedrock({
                 region: awsCredentials.region,
                 accessKeyId: awsCredentials.accessKeyId,
                 secretAccessKey: awsCredentials.secretAccessKey,
                 sessionToken: awsCredentials.sessionToken,
             });
-            
+
             // Map Anthropic model names to AWS Bedrock model IDs (base models without region prefix)
             const baseModelMap: Record<AnthropicModel, string> = {
                 [ANTHROPIC_HAIKU]: "anthropic.claude-3-5-haiku-20241022-v1:0",
                 [ANTHROPIC_SONNET_4]: "anthropic.claude-sonnet-4-20250514-v1:0",
+                [ANTHROPIC_OPUS_4_6]: "anthropic.claude-opus-4-6-v1:0",
                 [ANTHROPIC_SONNET_4_6]: "anthropic.claude-sonnet-4-20250514-v1:0",
             };
-            
+
             const baseModelId = baseModelMap[model];
             if (!baseModelId) {
                 throw new Error(`Unsupported model for AWS Bedrock: ${model}`);
             }
-            
+
             // Get regional prefix based on AWS region
             const regionalPrefix = getBedrockRegionalPrefix(awsCredentials.region);
             const bedrockModelId = `${regionalPrefix}.${baseModelId}`;
-            
+
             return bedrock(bedrockModelId);
         } else if (loginMethod === LoginMethod.VERTEX_AI) {
             const vertexCredentials = await getVertexAiCredentials();
@@ -224,6 +228,7 @@ export const getAnthropicClient = async (model: AnthropicModel): Promise<any> =>
             const vertexModelMap: Record<AnthropicModel, string> = {
                 [ANTHROPIC_HAIKU]: "claude-3-5-haiku@20241022",
                 [ANTHROPIC_SONNET_4]: "claude-sonnet-4-5@20250929",
+                [ANTHROPIC_OPUS_4_6]: "claude-opus-4-6@20250929",
                 [ANTHROPIC_SONNET_4_6]: "claude-sonnet-4-6@20250929",
             };
 
@@ -247,8 +252,8 @@ export const getAnthropicClient = async (model: AnthropicModel): Promise<any> =>
 /**
  * Type definition for provider-specific cache options
  */
-export type ProviderCacheOptions = 
-    | { anthropic: { cacheControl: { type: string } } } 
+export type ProviderCacheOptions =
+    | { anthropic: { cacheControl: { type: string } } }
     | { bedrock: { cachePoint: { type: string } } };
 
 /**
@@ -257,7 +262,7 @@ export type ProviderCacheOptions =
  */
 export const getProviderCacheControl = async (): Promise<ProviderCacheOptions> => {
     const loginMethod = await getLoginMethod();
-    
+
     switch (loginMethod) {
         case LoginMethod.AWS_BEDROCK:
             return { bedrock: { cachePoint: { type: 'default' } } };

@@ -92,7 +92,9 @@ import {
     showSignInAlert,
     submitFeedback,
     updateChatMessage,
-    updateRequirementSpecification
+    updateRequirementSpecification,
+    getContextUsage,
+    ContextUsageInfo
 } from "@wso2/ballerina-core";
 import { HOST_EXTENSION } from "vscode-messenger-common";
 import { Messenger } from "vscode-messenger-webview";
@@ -286,5 +288,9 @@ export class AiPanelRpcClient implements AIPanelAPI {
 
     getActiveTempDir(): Promise<string> {
         return this._messenger.sendRequest(getActiveTempDir, HOST_EXTENSION);
+    }
+
+    getContextUsage(): Promise<ContextUsageInfo | null> {
+        return this._messenger.sendRequest(getContextUsage, HOST_EXTENSION);
     }
 }

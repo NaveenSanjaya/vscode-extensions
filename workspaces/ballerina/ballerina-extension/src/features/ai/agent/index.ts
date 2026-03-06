@@ -29,6 +29,13 @@ import {
 import { extension } from "../../../BalExtensionContext";
 import { getProjectMetrics } from "../../telemetry/common/project-metrics";
 import { getHashedProjectId } from "../../telemetry/common/project-id";
+import {
+    NATIVE_COMPACTION_TRIGGER
+} from "./constants";
+import {
+    createNativeCompactionConfig,
+    NATIVE_COMPACTION_INSTRUCTIONS
+} from "./compact/native";
 
 // ==================================
 // Agent Generation Functions
@@ -45,6 +52,8 @@ export function createExecutorConfig<TParams>(
         chatStorageEnabled?: boolean; // Always have?
         cleanupStrategy: 'immediate' | 'review';
         existingTempPath?: string;  //TODO: Maybe lazyily get this? not sure if needed here.
+        contextManagement?: any; // For native compaction support
+        threadId?: string; // Thread identifier (defaults to 'default')
     }
 ): AICommandConfig<TParams> {
     const ctx = StateMachine.context();
@@ -56,13 +65,14 @@ export function createExecutorConfig<TParams>(
         params,
         chatStorage: options.chatStorageEnabled ? {
             workspaceId: ctx.projectPath,
-            threadId: 'default',
+            threadId: options.threadId || 'default',
             enabled: true,
         } : undefined,
         lifecycle: {
             cleanupStrategy: options.cleanupStrategy,
             existingTempPath: options.existingTempPath,
-        }
+        },
+        contextManagement: options.contextManagement
     };
 }
 
@@ -83,12 +93,21 @@ export async function generateAgent(params: GenerateAgentCodeRequest): Promise<b
         const threadId = params.threadId || 'default';
         const pendingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
 
+        console.log('[Agent] Native compaction enabled');
+        const contextManagement = createNativeCompactionConfig({
+            trigger: NATIVE_COMPACTION_TRIGGER,
+            pauseAfterCompaction: false,
+            instructions: NATIVE_COMPACTION_INSTRUCTIONS
+        });
+
         // Create config using factory function
         const config = createExecutorConfig(params, {
             command: Command.Agent,
             chatStorageEnabled: true,  // Agent uses chat storage for multi-turn conversations
             cleanupStrategy: 'review', // Review mode - temp persists until user accepts/declines
-            existingTempPath: pendingReview?.reviewState.tempProjectPath
+            existingTempPath: pendingReview?.reviewState.tempProjectPath,
+            contextManagement,
+            threadId,
         });
 
         // Get project metrics, project ID, and chat history for telemetry

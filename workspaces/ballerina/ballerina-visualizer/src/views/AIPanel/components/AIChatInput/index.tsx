@@ -19,7 +19,8 @@
 import { useState, useRef, KeyboardEvent, useEffect, useLayoutEffect, useImperativeHandle, forwardRef } from "react";
 import styled from "@emotion/styled";
 import { Codicon } from "@wso2/ui-toolkit";
-import { AIPanelPrompt, Attachment, AttachmentStatus, Command, ExtendedDataMapperMetadata, TemplateId } from "@wso2/ballerina-core";
+import { AIPanelPrompt, Attachment, AttachmentStatus, Command, ContextUsageInfo, ExtendedDataMapperMetadata, TemplateId } from "@wso2/ballerina-core";
+import ContextUsageIndicator from "../ContextUsageIndicator";
 import AttachmentBox, { AttachmentsContainer } from "../AttachmentBox";
 import { StyledInputComponent, StyledInputRef } from "./StyledInput";
 import { AttachmentOptions, useAttachments } from "./hooks/useAttachments";
@@ -132,11 +133,12 @@ interface AIChatInputProps {
     onChangeAgentMode?: (mode: AgentMode) => void;
     isAutoApproveEnabled?: boolean;
     onDisableAutoApprove?: () => void;
+    contextUsage?: ContextUsageInfo | null;
 }
 
 const AIChatInput = forwardRef<AIChatInputRef, AIChatInputProps>(
     ({ initialCommandTemplate, tagOptions, attachmentOptions, placeholder, onSend, onStop, isLoading,
-       agentMode = AgentMode.Edit, onChangeAgentMode, isAutoApproveEnabled = false, onDisableAutoApprove }, ref) => {
+        agentMode = AgentMode.Edit, onChangeAgentMode, isAutoApproveEnabled = false, onDisableAutoApprove, contextUsage }, ref) => {
         const [inputValue, setInputValue] = useState<{
             text: string;
             [key: string]: any;
@@ -590,6 +592,9 @@ const AIChatInput = forwardRef<AIChatInputRef, AIChatInputProps>(
                                 <ActionButton title="Attach Context" onClick={handleAttachClick}>
                                     <Codicon name="new-file" />
                                 </ActionButton>
+                                {contextUsage && (
+                                    <ContextUsageIndicator contextUsage={contextUsage} />
+                                )}
                             </div>
                             <div>
                                 <ActionButton

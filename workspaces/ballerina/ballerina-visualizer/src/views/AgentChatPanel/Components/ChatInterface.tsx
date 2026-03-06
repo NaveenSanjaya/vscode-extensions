@@ -18,7 +18,7 @@
  * THIS FILE INCLUDES AUTO GENERATED CODE
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import styled from "@emotion/styled";
 import ChatInput from "./ChatInput";
 import LoadingIndicator from "./LoadingIndicator";
@@ -336,30 +336,31 @@ const ChatInterface: React.FC = () => {
     // Check if we have any traces (to enable/disable Session Logs button)
     const hasTraces = messages.some(msg => !msg.isUser && msg.traceId);
 
+    // Load chat history from AI Panel storage (supports compaction)
+    const loadChatHistory = useCallback(async () => {
+        try {
+            // Use AI Panel RPC to load messages from chatStateStorage
+            // This supports auto-compaction feature
+            const uiMessages = await rpcClient.getAiPanelRpcClient().getChatMessages();
+
+            if (uiMessages && uiMessages.length > 0) {
+                // Convert UIChatMessage to ChatMessage format
+                const chatMessages: ChatMessage[] = uiMessages.map(msg => ({
+                    type: ChatMessageType.MESSAGE,
+                    text: msg.content,
+                    isUser: msg.role === 'user',
+                    // Note: UIChatMessage doesn't include traceId/executionSteps
+                    // Tracing info is preserved in storage but not exposed through this RPC
+                }));
+                setMessages(chatMessages);
+            }
+        } catch (error) {
+            console.error('Failed to load chat history:', error);
+        }
+    }, [rpcClient]);
+
     // Load chat history and check tracing status on mount
     useEffect(() => {
-        const loadChatHistory = async () => {
-            try {
-                const history = await rpcClient.getAgentChatRpcClient().getChatHistory();
-
-                // Only restore chat if the agent is still running
-                if (history.isAgentRunning && history.messages.length > 0) {
-                    // Convert ChatHistoryMessage to ChatMessage format
-                    const chatMessages: ChatMessage[] = history.messages.map(msg => ({
-                        type: msg.type === 'error' ? ChatMessageType.ERROR : ChatMessageType.MESSAGE,
-                        text: msg.text,
-                        isUser: msg.isUser,
-                        traceId: msg.traceId,
-                        executionSteps: msg.executionSteps
-                    }));
-                    setMessages(chatMessages);
-                }
-                // If agent is not running, chat history is cleared automatically
-            } catch (error) {
-                console.error('Failed to load chat history:', error);
-            }
-        };
-
         const checkTracingStatus = async () => {
             try {
                 const status = await rpcClient.getAgentChatRpcClient().getTracingStatus();
@@ -372,15 +373,24 @@ const ChatInterface: React.FC = () => {
 
         loadChatHistory();
         checkTracingStatus();
-    }, [rpcClient]);
+    }, [rpcClient, loadChatHistory]);
 
     // Auto scroll to the bottom when messages change
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
 
+    // Only native auto-compaction is supported (handled server-side by Anthropic)
+
     const handleSendMessage = async (text: string) => {
         if (!text.trim()) return;
+
+        // Manual /compact command removed - only auto-compaction supported
+        // if (text.trim() === '/compact') {
+        //     setMessages((prev) => [...prev, { type: ChatMessageType.MESSAGE, text, isUser: true }]);
+        //     await handleCompactConversation();
+        //     return;
+        // }
 
         setMessages((prev) => [...prev, { type: ChatMessageType.MESSAGE, text, isUser: true }]);
         setIsLoading(true);

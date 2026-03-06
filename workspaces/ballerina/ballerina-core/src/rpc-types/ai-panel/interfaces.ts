@@ -162,11 +162,11 @@ export interface TempDirectoryPath {
 }
 
 export interface ExtractMappingDetailsRequest {
-    parameters: MappingParameters;                
-    recordMap: Record<string, DataMappingRecord>;  
-    allImports: ImportInfo[];  
-    existingFunctions: ComponentInfo[];    
-    functionContents: Record<string, string>;        
+    parameters: MappingParameters;
+    recordMap: Record<string, DataMappingRecord>;
+    allImports: ImportInfo[];
+    existingFunctions: ComponentInfo[];
+    functionContents: Record<string, string>;
 }
 
 export interface ExistingFunctionMatchResult {
@@ -176,13 +176,13 @@ export interface ExistingFunctionMatchResult {
 }
 
 export interface ExtractMappingDetailsResponse {
-    inputs: DataMappingRecord[];    
-    output: DataMappingRecord; 
+    inputs: DataMappingRecord[];
+    output: DataMappingRecord;
     inputParams: string[];
-    outputParam: string;   
+    outputParam: string;
     imports: ImportInfo[];
     inputNames: string[];
-    existingFunctionMatch: ExistingFunctionMatchResult;       
+    existingFunctionMatch: ExistingFunctionMatchResult;
 }
 
 export interface RepairCodeParams {
@@ -193,8 +193,8 @@ export interface RepairCodeParams {
 }
 
 export interface RepairedMapping {
-    output: string;       
-    expression: string; 
+    output: string;
+    expression: string;
 }
 
 export interface repairCodeRequest {
@@ -261,14 +261,14 @@ export enum AttachmentStatus {
 export interface SubmitFeedbackRequest {
     positive: boolean;
     messages: FeedbackMessage[];
-    feedbackText : string;
+    feedbackText: string;
     diagnostics: DiagnosticEntry[];
 }
 
 export interface FeedbackMessage {
     command?: string;
     content: string;
-    role : string;
+    role: string;
 }
 
 export interface ChatEntry {
@@ -485,4 +485,21 @@ export interface AbortAIGenerationRequest {
     workspaceId?: string;
     /** Thread identifier (defaults to 'default') */
     threadId?: string;
+}
+
+/**
+ * Context usage information for UI display
+ */
+export interface ContextUsageInfo {
+    /** Current token usage (from last generation) */
+    tokensUsed: number;
+    /** Maximum context window size */
+    maxTokens: number;
+    /** Usage percentage (0-1) */
+    percentage: number;
+    /** Whether auto-compact will trigger on next message */
+    willAutoCompact: boolean;
+    /** Token count at which native compaction is triggered — used by the frontend
+     *  to recompute willAutoCompact dynamically from live usage_metrics events */
+    compactionTriggerTokens: number;
 }

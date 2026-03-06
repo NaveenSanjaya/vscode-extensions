@@ -327,6 +327,11 @@ export class ChatStateStorage {
     /**
      * Get chat history for LLM (model messages only)
      * Includes ALL generations (pending, under_review, accepted)
+     *
+     * Note: For native compaction (using Claude's built-in compaction feature),
+     * messages may contain compaction blocks. The Claude API automatically ignores
+     * all content before compaction blocks, so no special handling is needed here.
+     *
      * @param workspaceId Workspace identifier
      * @param threadId Thread identifier
      * @returns Array of model messages for LLM context
@@ -644,6 +649,57 @@ export class ChatStateStorage {
             totalGenerations,
             estimatedSizeMB: estimatedSize / (1024 * 1024)
         };
+    }
+
+    // ============================================
+    // Token Usage Management (for auto-compaction)
+    // ============================================
+
+    /**
+     * Update generation with token usage data
+     * Used to track context window usage for auto-compaction and context indicator
+     * 
+     * @param workspaceId Workspace identifier
+     * @param threadId Thread identifier
+     * @param generationId Generation identifier
+     * @param inputTokens Input tokens used in this generation
+     */
+    updateGenerationTokenUsage(
+        workspaceId: string,
+        threadId: string,
+        generationId: string,
+        inputTokens: number
+    ): void {
+        const generation = this.getGeneration(workspaceId, threadId, generationId);
+        if (generation) {
+            generation.totalInputTokens = inputTokens;
+            console.log(`[ChatStateStorage] Updated generation ${generationId} with ${inputTokens} context tokens`);
+        }
+    }
+
+    /**
+     * Get the last known total input tokens from the most recent generation.
+     * Returns undefined if no token data exists yet.
+     *
+     * @param workspaceId Workspace identifier
+     * @param threadId Thread identifier
+     * @returns Total input tokens from last generation, or undefined
+     */
+    getLastTokenUsage(workspaceId: string, threadId: string): number | undefined {
+        const thread = this.getOrCreateThread(workspaceId, threadId);
+
+        // Scan backward from the most recent generation
+        for (let i = thread.generations.length - 1; i >= 0; i--) {
+            const generation = thread.generations[i];
+
+            // Return first found token usage
+            if (generation.totalInputTokens !== undefined) {
+                console.log(`[ChatStateStorage] Found last token usage: ${generation.totalInputTokens} tokens`);
+                return generation.totalInputTokens;
+            }
+        }
+
+        return undefined;
     }
 
     // ============================================

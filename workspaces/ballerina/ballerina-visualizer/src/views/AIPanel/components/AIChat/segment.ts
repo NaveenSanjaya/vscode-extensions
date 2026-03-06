@@ -14,6 +14,7 @@ export enum SegmentType {
     ConfigurationCollector = "ConfigurationCollector",
     ReviewActions = "ReviewActions",
     Thinking = "Thinking",
+    Compaction = "Compaction",
 }
 
 interface Segment {
@@ -58,6 +59,27 @@ function splitHalfGeneratedCode(content: string): Segment[] {
             type: SegmentType.Thinking,
             loading: true,
             text: thinkingMatch[1],
+        });
+        return segments;
+    }
+
+    // Check for half-generated <compaction> tag (opened but not closed)
+    const compactionPattern = /<compaction>([\s\S]*?)$/;
+    const compactionMatch = content.match(compactionPattern);
+
+    if (compactionMatch && !content.includes('</compaction>')) {
+        const beforeCompaction = content.slice(0, compactionMatch.index);
+        if (beforeCompaction.trim()) {
+            segments.push({
+                type: SegmentType.Text,
+                loading: false,
+                text: beforeCompaction,
+            });
+        }
+        segments.push({
+            type: SegmentType.Compaction,
+            loading: true,
+            text: compactionMatch[1],
         });
         return segments;
     }
@@ -109,7 +131,7 @@ export function splitContent(content: string): Segment[] {
     // Combined regex to capture either <code ...>```<language> code ```</code> or <progress>Text</progress>
     // Using matchAll for stateless iteration to avoid regex lastIndex corruption during streaming
     const regexPattern =
-        /<code\s+filename="([^"]+)"(?:\s+type=("test"|"ai_map"|"type_creator"))?>\s*```(\w+)\s*([\s\S]*?)```\s*<\/code>|<progress>([\s\S]*?)<\/progress>|<toolcall(?:\s+[^>]*)?>([\s\S]*?)<\/toolcall>|<toolresult(?:\s+[^>]*)?>([\s\S]*?)<\/toolresult>|<todo>([\s\S]*?)<\/todo>|<attachment>([\s\S]*?)<\/attachment>|<scenario>([\s\S]*?)<\/scenario>|<button\s+type="([^"]+)">([\s\S]*?)<\/button>|<inlineCode>([\s\S]*?)<inlineCode>|<references>([\s\S]*?)<references>|<connectorgenerator>([\s\S]*?)<\/connectorgenerator>|<reviewactions>([\s\S]*?)<\/reviewactions>|<configurationcollector>([\s\S]*?)<\/configurationcollector>|<thinking>([\s\S]*?)<\/thinking>/g;
+        /<code\s+filename="([^"]+)"(?:\s+type=("test"|"ai_map"|"type_creator"))?>\s*```(\w+)\s*([\s\S]*?)```\s*<\/code>|<progress>([\s\S]*?)<\/progress>|<toolcall(?:\s+[^>]*)?>([\ \S]*?)<\/toolcall>|<toolresult(?:\s+[^>]*)?>([\ \S]*?)<\/toolresult>|<todo>([\s\S]*?)<\/todo>|<attachment>([\s\S]*?)<\/attachment>|<scenario>([\s\S]*?)<\/scenario>|<button\s+type="([^"]+)">([\s\S]*?)<\/button>|<inlineCode>([\s\S]*?)<inlineCode>|<references>([\s\S]*?)<references>|<connectorgenerator>([\s\S]*?)<\/connectorgenerator>|<reviewactions>([\s\S]*?)<\/reviewactions>|<configurationcollector>([\s\S]*?)<\/configurationcollector>|<thinking>([\s\S]*?)<\/thinking>|<compaction>([\s\S]*?)<\/compaction>/g;
 
     // Convert to array to avoid stateful regex iteration issues
     const matches = Array.from(content.matchAll(regexPattern));
@@ -298,6 +320,14 @@ export function splitContent(content: string): Segment[] {
                 type: SegmentType.Thinking,
                 loading: false,
                 text: match[18],
+            });
+        } else if (match[19] !== undefined) {
+            // <compaction> block matched
+            updateLastProgressSegmentLoading();
+            segments.push({
+                type: SegmentType.Compaction,
+                loading: false,
+                text: match[19],
             });
         }
 

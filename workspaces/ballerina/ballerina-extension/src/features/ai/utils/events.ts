@@ -35,6 +35,10 @@ import {
     sendReasoningStartNotification,
     sendReasoningDeltaNotification,
     sendReasoningEndNotification,
+    sendCompactionStartNotification,
+    sendCompactionDeltaNotification,
+    sendCompactionEndNotification,
+    sendUsageMetricsNotification,
 } from "./ai-utils";
 
 export type CopilotEventHandler = (event: ChatNotify) => void;
@@ -95,8 +99,10 @@ export function createWebviewEventHandler(command: Command): CopilotEventHandler
                 );
                 break;
             case "evals_tool_result":
-            case "usage_metrics":
                 // Ignore evals-specific events in webview
+                break;
+            case "usage_metrics":
+                sendUsageMetricsNotification(event.usage, event.isRepair);
                 break;
             case "diagnostics":
                 sendDiagnosticMessageNotification(event.diagnostics);
@@ -118,6 +124,15 @@ export function createWebviewEventHandler(command: Command): CopilotEventHandler
                 break;
             case "reasoning_end":
                 sendReasoningEndNotification();
+                break;
+            case "compaction_start":
+                sendCompactionStartNotification();
+                break;
+            case "compaction_delta":
+                sendCompactionDeltaNotification(event.content);
+                break;
+            case "compaction_end":
+                sendCompactionEndNotification();
                 break;
             default:
                 console.warn(`Unhandled event type: ${event}`);
