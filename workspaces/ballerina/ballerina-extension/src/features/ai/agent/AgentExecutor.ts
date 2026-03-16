@@ -34,6 +34,9 @@ import { RPCLayer } from '../../../RPCLayer';
 import { VisualizerWebview } from '../../../views/visualizer/webview';
 import * as path from 'path';
 import { approvalViewManager } from '../state/ApprovalViewManager';
+import { compactionManager } from '../compaction-manager';
+import { CompactionGuard } from './compaction/CompactionGuard';
+import { contextExhausted } from './compaction/contextExhausted';
 import {
     sendTelemetryEvent,
     sendTelemetryException,
@@ -174,7 +177,32 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
                 generationType: 'agent',
             });
 
-            // 4. Get chat history from storage (if enabled)
+            // Resolve model ONCE — reused for both agent streaming and compaction (M02)
+            const model = await getAnthropicClient(ANTHROPIC_SONNET_4);
+
+            // Bind the authenticated model to the compaction manager
+            compactionManager.bindModel(model);
+
+            const workspaceId = this.config.executionContext.projectPath;
+            const threadId = 'default';
+            const projectState = {
+                modifiedFiles: Array.from(modifiedFiles),
+                tempProjectPath,
+                workingDirectory: workspaceId,
+            };
+
+            // PRE-TURN compaction: compact if context is already above threshold
+            // C10: failures are handled gracefully inside checkAndCompact (returns without throwing)
+            // M05: abortSignal ensures the summarization LLM call is also cancelled on user abort
+            await compactionManager.checkAndCompact(
+                workspaceId,
+                threadId,
+                projectState,
+                this.config.abortController.signal,
+                this.config.eventHandler
+            );
+
+            // 4. Get chat history from storage (if enabled) — AFTER pre-turn compaction
             const chatHistory = this.getChatHistory();
             console.log(`[AgentExecutor] Using ${chatHistory.length} chat history messages`);
 
@@ -209,15 +237,56 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
                 runningServices: runningServicesManager,
             });
 
-            // Stream LLM response
+            // === MID-STREAM COMPACTION GUARD ===
+            // Watches actual inputTokens between steps and compacts when threshold is reached.
+            // Uses 80% of the context window as the mid-stream trigger point.
+            const compactionGuard = new CompactionGuard({
+                engine: compactionManager.getEngine(),
+                tokenThreshold: Math.floor(200_000 * 0.80),  // 160K tokens = 80% of context window
+                maxCompactionAttempts: 3,
+                preserveRecentMessageCount: 6,  // Keep last 3 tool-call + tool-result pairs
+                eventHandler: this.config.eventHandler,
+                originalUserMessage: JSON.stringify(userMessageContent),
+                projectState,
+                abortSignal: this.config.abortController.signal,
+            });
+
+            // Stream LLM response with mid-stream compaction and dual stop conditions
             const { fullStream, response, usage } = streamText({
-                model: await getAnthropicClient(ANTHROPIC_SONNET_4),
+                model,
                 maxOutputTokens: 8192,
                 temperature: 0,
                 messages: allMessages,
-                stopWhen: stepCountIs(50),
                 tools,
                 abortSignal: this.config.abortController.signal,
+
+                // MID-STREAM COMPACTION: check and compact between steps if needed
+                prepareStep: async ({ steps, stepNumber, messages }) => {
+                    return compactionGuard.maybeCompact({ steps, stepNumber, messages });
+                },
+
+                // Emit per-step token usage for context usage widget + observability
+                onStepFinish: (step) => {
+                    console.log(
+                        `[AgentExecutor] Step ${step.stepNumber} complete: ` +
+                        `${step.usage?.inputTokens ?? 0} input tokens, ` +
+                        `finishReason: ${step.finishReason}`
+                    );
+                    if (step.usage) {
+                        this.config.eventHandler({
+                            type: "usage_metrics",
+                            usage: {
+                                inputTokens: step.usage.inputTokens || 0,
+                                cacheCreationInputTokens: (step.usage as any).cacheCreationInputTokens || 0,
+                                cacheReadInputTokens: (step.usage as any).cacheReadInputTokens || 0,
+                                outputTokens: step.usage.outputTokens || 0,
+                            },
+                        });
+                    }
+                },
+
+                // DUAL STOP CONDITIONS: step limit OR context exhaustion
+                stopWhen: [stepCountIs(50), contextExhausted(compactionGuard)],
             });
 
             // Send start event to frontend
@@ -275,8 +344,6 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
                     });
 
                     // Update generation with user message + partial messages
-                    const workspaceId = this.config.executionContext.projectPath;
-                    const threadId = 'default';
                     chatStateStorage.updateGeneration(workspaceId, threadId, this.config.generationId, {
                         modelMessages: [
                             { role: "user", content: streamContext.userMessageContent },
@@ -311,6 +378,21 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
 
                 // Re-throw for base class error handling
                 throw error;
+            }
+
+            // C04: Update token estimation context with actual total usage
+            // This improves threshold accuracy for the NEXT turn's pre-turn compaction check
+            try {
+                const totalUsage = await usage;
+                if (totalUsage) {
+                    compactionManager.updateTokenContext(
+                        totalUsage.inputTokens ?? 0,
+                        Math.ceil(getSystemPrompt(projects, params.operationType).length / 4),
+                        2000  // Conservative estimate for tool definitions
+                    );
+                }
+            } catch (usageError) {
+                console.warn('[AgentExecutor] Could not retrieve usage for token context update:', usageError);
             }
 
             return {

@@ -47,6 +47,8 @@ import {
     CheckpointInfo,
     AbortAIGenerationRequest,
     UsageResponse,
+    CompactConversationRequest,
+    CompactConversationResponse,
 } from "./interfaces";
 import { RequestType, NotificationType } from "vscode-messenger-common";
 
@@ -97,3 +99,5 @@ export const clearChat: RequestType<void, void> = { method: `${_preFix}/clearCha
 export const updateChatMessage: RequestType<UpdateChatMessageRequest, void> = { method: `${_preFix}/updateChatMessage` };
 export const getActiveTempDir: RequestType<void, string> = { method: `${_preFix}/getActiveTempDir` };
 export const getUsage: RequestType<void, UsageResponse | undefined> = { method: `${_preFix}/getUsage` };
+export const compactConversation: RequestType<CompactConversationRequest, CompactConversationResponse> = { method: `${_preFix}/compactConversation` };
+export const getShowContextUsage: RequestType<void, boolean> = { method: `${_preFix}/getShowContextUsage` };

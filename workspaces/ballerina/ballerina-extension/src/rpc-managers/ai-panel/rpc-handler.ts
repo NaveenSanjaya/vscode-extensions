@@ -84,10 +84,15 @@ import {
     updateChatMessage,
     UpdateChatMessageRequest,
     updateRequirementSpecification,
-    getUsage
+    getUsage,
+    compactConversation,
+    CompactConversationRequest,
+    getShowContextUsage,
 } from "@wso2/ballerina-core";
+import { workspace } from 'vscode';
 import { Messenger } from "vscode-messenger";
 import { AiPanelRpcManager } from "./rpc-manager";
+import { sendConfigChangeNotification } from "../../features/ai/utils/ai-utils";
 
 export function registerAiPanelRpcHandlers(messenger: Messenger) {
     const rpcManger = new AiPanelRpcManager();
@@ -137,4 +142,14 @@ export function registerAiPanelRpcHandlers(messenger: Messenger) {
     messenger.onRequest(updateChatMessage, (args: UpdateChatMessageRequest) => rpcManger.updateChatMessage(args));
     messenger.onRequest(getActiveTempDir, () => rpcManger.getActiveTempDir());
     messenger.onRequest(getUsage, () => rpcManger.getUsage());
+    messenger.onRequest(compactConversation, (args: CompactConversationRequest) => rpcManger.compactConversation(args));
+    messenger.onRequest(getShowContextUsage, () => rpcManger.getShowContextUsage());
+
+    // Notify webview immediately when the showContextUsage setting is toggled
+    workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('ballerina.ai.showContextUsage')) {
+            const value = workspace.getConfiguration('ballerina').get<boolean>('ai.showContextUsage', true);
+            sendConfigChangeNotification('showContextUsage', value);
+        }
+    });
 }

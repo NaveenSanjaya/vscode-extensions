@@ -162,6 +162,7 @@ const AIChat: React.FC = () => {
     };
 
     const [isLoading, setIsLoading] = useState(false);
+    const [isCompacting, setIsCompacting] = useState(false);
     const [lastQuestionIndex, setLastQuestionIndex] = useState(-1);
     const [isCodeLoading, setIsCodeLoading] = useState(false);
     const [currentGeneratingPromptIndex, setCurrentGeneratingPromptIndex] = useState(-1);
@@ -186,6 +187,9 @@ const AIChat: React.FC = () => {
 
     const [usage, setUsage] = useState<{ remainingUsagePercentage: number; resetsIn: number } | null>(null);
     const [isUsageExceeded, setIsUsageExceeded] = useState(false);
+
+    const [contextUsage, setContextUsage] = useState<{ inputTokens: number; percentage: number } | null>(null);
+    const [showContextUsage, setShowContextUsage] = useState(true);
 
     //TODO: Need a better way of storing data related to last generation to be in the repair state.
     const currentDiagnosticsRef = useRef<DiagnosticEntry[]>([]);
@@ -308,6 +312,10 @@ const AIChat: React.FC = () => {
     };
 
     useEffect(() => { fetchUsage(); }, []);
+
+    useEffect(() => {
+        rpcClient.getAiPanelRpcClient().getShowContextUsage().then(setShowContextUsage).catch(() => {});
+    }, []);
 
     const handleCheckpointRestore = async (checkpointId: string) => {
         try {
@@ -622,8 +630,26 @@ const AIChat: React.FC = () => {
         } else if (type === "messages") {
             messagesRef.current = response.messages;
 
+        } else if (type === "compaction_start") {
+            setIsCompacting(true);
+
+        } else if (type === "compaction_end" || type === "compaction_failed") {
+            setIsCompacting(false);
+
+        } else if (type === "usage_metrics") {
+            const inputTokens = (response as any).usage?.inputTokens ?? 0;
+            const PRE_TURN_THRESHOLD = 178_808;
+            const percentage = Math.min(100, Math.round((inputTokens / PRE_TURN_THRESHOLD) * 100));
+            setContextUsage({ inputTokens, percentage });
+
+        } else if (type === "config_change") {
+            if ((response as any).key === 'showContextUsage') {
+                setShowContextUsage((response as any).value);
+            }
+
         } else if (type === "stop") {
             console.log("Received stop signal");
+            setIsCompacting(false);
             setIsCodeLoading(false);
             setIsLoading(false);
             fetchUsage();
@@ -640,6 +666,7 @@ const AIChat: React.FC = () => {
                 msgs[targetIndex] = { ...last, content: serializeStream(updated, last.content) };
                 return msgs;
             });
+            setIsCompacting(false);
             setIsCodeLoading(false);
             setIsLoading(false);
 
@@ -687,6 +714,7 @@ const AIChat: React.FC = () => {
                 newMessages[targetIndex].content = content + errorTemplate;
                 return newMessages;
             });
+            setIsCompacting(false);
             setIsCodeLoading(false);
             setIsLoading(false);
             isErrorChunkReceivedRef.current = true;
@@ -761,6 +789,7 @@ const AIChat: React.FC = () => {
         try {
             await processContent(content);
         } catch (error: any) {
+            setIsCompacting(false);
             setIsLoading(false);
             setIsCodeLoading(false);
             if (error.name === "AbortError") {
@@ -957,6 +986,37 @@ const AIChat: React.FC = () => {
                     }
                     break;
                 }
+                case Command.Compact: {
+                    setIsCompacting(true);
+                    const result = await rpcClient.getAiPanelRpcClient().compactConversation({});
+                    if (!result.success) {
+                        throw new Error(result.error || 'Compaction failed');
+                    }
+                    // Reload the compacted history from backend and reset all UI state.
+                    // Without this, isLoading stays true (input disabled) and the old
+                    // messages remain on screen because the success path never resets state.
+                    const updatedMessages = await rpcClient.getAiPanelRpcClient().getChatMessages();
+                    const uiMessages = convertToUIMessages(updatedMessages);
+                    const summaryContent = result.summary
+                        ? `This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n**Summary**\n\n${result.summary}`
+                        : `Context compacted successfully. You can continue the conversation.`;
+                    uiMessages.push({
+                        role: 'Copilot',
+                        content: summaryContent,
+                        type: 'assistant_message',
+                        checkpointId: '',
+                        messageId: '',
+                    });
+                    setMessages(uiMessages);
+                    setIsCompacting(false);
+                    setIsLoading(false);
+                    setIsCodeLoading(false);
+                    setShowReviewActions(false);
+                    setCurrentFileArray([]);
+                    setLastQuestionIndex(-1);
+                    setCurrentGeneratingPromptIndex(-1);
+                    break;
+                }
             }
         }
     }
@@ -1115,6 +1175,7 @@ const AIChat: React.FC = () => {
         setMessages([]);
         setApprovalRequest(null);
         setShowReviewActions(false);
+        setContextUsage(null);
         await rpcClient.getAiPanelRpcClient().clearChat();
     }
 
@@ -1688,6 +1749,7 @@ const AIChat: React.FC = () => {
                             onSend={handleSend}
                             onStop={handleStop}
                             isLoading={isLoading}
+                            loadingLabel={isCompacting ? "Compacting conversation..." : undefined}
                             showSuggestedCommands={Array.isArray(otherMessages) && otherMessages.length === 0}
                             codeContext={codeContext}
                             onRemoveCodeContext={() => updateCodeContext(undefined)}
@@ -1696,6 +1758,7 @@ const AIChat: React.FC = () => {
                             isAutoApproveEnabled={isAutoApproveEnabled}
                             onDisableAutoApprove={handleToggleAutoApprove}
                             disabled={isUsageExceeded}
+                            contextUsage={showContextUsage ? contextUsage : null}
                         />
                     )}
                 </AIChatView>

@@ -34,6 +34,7 @@ import { Tag } from "../../commandTemplates/models/tag.model";
 import { getFirstOccurringPlaceholder, matchCommandTemplate } from "./utils/utils";
 import { getAllCommands, getTags, getTemplateDefinitionsByCommand } from "../../commandTemplates/utils/utils";
 import { PlaceholderTagMap } from "../../commandTemplates/data/placeholderTags.const";
+import ContextUsageWidget from "../AIChat/compaction/ContextUsageWidget";
 
 // Styled Components
 const Container = styled.div`
@@ -133,11 +134,13 @@ interface AIChatInputProps {
     isAutoApproveEnabled?: boolean;
     onDisableAutoApprove?: () => void;
     disabled?: boolean;
+    contextUsage?: { inputTokens: number; percentage: number } | null;
 }
 
 const AIChatInput = forwardRef<AIChatInputRef, AIChatInputProps>(
     ({ initialCommandTemplate, tagOptions, attachmentOptions, placeholder, onSend, onStop, isLoading,
-       agentMode = AgentMode.Edit, onChangeAgentMode, isAutoApproveEnabled = false, onDisableAutoApprove, disabled }, ref) => {
+       agentMode = AgentMode.Edit, onChangeAgentMode, isAutoApproveEnabled = false, onDisableAutoApprove, disabled,
+       contextUsage }, ref) => {
         const [inputValue, setInputValue] = useState<{
             text: string;
             [key: string]: any;
@@ -592,6 +595,12 @@ const AIChatInput = forwardRef<AIChatInputRef, AIChatInputProps>(
                                 <ActionButton title="Attach Context" onClick={handleAttachClick}>
                                     <Codicon name="new-file" />
                                 </ActionButton>
+                                {contextUsage && (
+                                    <ContextUsageWidget
+                                        percentage={contextUsage.percentage}
+                                        inputTokens={contextUsage.inputTokens}
+                                    />
+                                )}
                             </div>
                             <div>
                                 <ActionButton

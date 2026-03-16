@@ -131,6 +131,13 @@ export const commandTemplates = {
                 }
             ],
         }
+    ],
+    [Command.Compact]: [
+        {
+            id: TemplateId.CompactConversation,
+            text: '',
+            placeholders: [],
+        }
     ]
 } as const;
 

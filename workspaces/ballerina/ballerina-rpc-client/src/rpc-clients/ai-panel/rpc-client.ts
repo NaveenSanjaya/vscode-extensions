@@ -93,7 +93,11 @@ import {
     submitFeedback,
     updateChatMessage,
     updateRequirementSpecification,
-    getUsage
+    getUsage,
+    compactConversation,
+    CompactConversationRequest,
+    CompactConversationResponse,
+    getShowContextUsage,
 } from "@wso2/ballerina-core";
 import { HOST_EXTENSION } from "vscode-messenger-common";
 import { Messenger } from "vscode-messenger-webview";
@@ -288,5 +292,13 @@ export class AiPanelRpcClient implements AIPanelAPI {
 
     getUsage(): Promise<UsageResponse | undefined> {
         return this._messenger.sendRequest(getUsage, HOST_EXTENSION);
+    }
+
+    compactConversation(params: CompactConversationRequest): Promise<CompactConversationResponse> {
+        return this._messenger.sendRequest(compactConversation, HOST_EXTENSION, params);
+    }
+
+    getShowContextUsage(): Promise<boolean> {
+        return this._messenger.sendRequest(getShowContextUsage, HOST_EXTENSION);
     }
 }

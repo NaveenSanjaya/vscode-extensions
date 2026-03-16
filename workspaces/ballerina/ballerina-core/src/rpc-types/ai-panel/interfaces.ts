@@ -491,3 +491,26 @@ export interface UsageResponse {
     remainingUsagePercentage: number;
     resetsIn: number; // in seconds
 }
+
+// ==================================
+// Compaction Related Interfaces
+// ==================================
+
+export interface CompactConversationRequest {
+    /** Optional user instructions for guiding the summarization (e.g., "focus on test changes") */
+    customInstructions?: string;
+}
+
+export interface CompactConversationResponse {
+    success: boolean;
+    /** Token count before compaction */
+    originalTokens?: number;
+    /** Token count after compaction */
+    compactedTokens?: number;
+    /** Percentage of tokens reduced */
+    reductionPercentage?: number;
+    /** The LLM-generated summary text shown to the user after compaction */
+    summary?: string;
+    /** Error message if compaction failed */
+    error?: string;
+}

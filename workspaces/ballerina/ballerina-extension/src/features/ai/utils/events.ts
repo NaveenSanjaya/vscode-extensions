@@ -14,7 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { ChatNotify, Command } from "@wso2/ballerina-core";
+import { ChatNotify, Command, onChatNotify } from "@wso2/ballerina-core";
+import { RPCLayer } from "../../../RPCLayer";
+import { AiPanelWebview } from "../../../views/ai-panel/webview";
 import {
     sendContentAppendNotification,
     sendContentReplaceNotification,
@@ -32,6 +34,7 @@ import {
     sendConnectorGenerationNotification,
     sendConfigurationCollectionNotification,
     sendReviewActionsNotification,
+    sendUsageMetricsNotification,
 } from "./ai-utils";
 
 export type CopilotEventHandler = (event: ChatNotify) => void;
@@ -92,8 +95,10 @@ export function createWebviewEventHandler(command: Command): CopilotEventHandler
                 );
                 break;
             case "evals_tool_result":
-            case "usage_metrics":
                 // Ignore evals-specific events in webview
+                break;
+            case "usage_metrics":
+                sendUsageMetricsNotification(event.usage);
                 break;
             case "diagnostics":
                 sendDiagnosticMessageNotification(event.diagnostics);
@@ -106,6 +111,18 @@ export function createWebviewEventHandler(command: Command): CopilotEventHandler
                 break;
             case "configuration_collection_event":
                 sendConfigurationCollectionNotification(event);
+                break;
+            case "compaction_start":
+                console.log('[Compaction] Context compaction started');
+                RPCLayer._messenger.sendNotification(onChatNotify, { type: "webview", webviewType: AiPanelWebview.viewType }, event);
+                break;
+            case "compaction_end":
+                console.log('[Compaction] Context compaction completed');
+                RPCLayer._messenger.sendNotification(onChatNotify, { type: "webview", webviewType: AiPanelWebview.viewType }, event);
+                break;
+            case "compaction_failed":
+                console.warn(`[Compaction] Context compaction failed: ${event.reason}`);
+                RPCLayer._messenger.sendNotification(onChatNotify, { type: "webview", webviewType: AiPanelWebview.viewType }, event);
                 break;
             default:
                 console.warn(`Unhandled event type: ${event}`);

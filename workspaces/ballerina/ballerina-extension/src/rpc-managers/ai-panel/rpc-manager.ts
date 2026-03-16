@@ -42,7 +42,9 @@ import {
     TestGenerationMentions,
     UIChatMessage,
     UpdateChatMessageRequest,
-    UsageResponse
+    UsageResponse,
+    CompactConversationRequest,
+    CompactConversationResponse,
 } from "@wso2/ballerina-core";
 import * as fs from 'fs';
 import path from "path";
@@ -82,6 +84,8 @@ import { approvalManager } from '../../features/ai/state/ApprovalManager';
 import { cleanupTempProject } from "../../features/ai/utils/project/temp-project";
 import { RPCLayer } from '../../RPCLayer';
 import { chatStateStorage } from '../../views/ai-panel/chatStateStorage';
+import { compactionManager } from '../../features/ai/compaction-manager';
+import { getAnthropicClient, ANTHROPIC_SONNET_4 } from '../../features/ai/utils/ai-client';
 import { restoreWorkspaceSnapshot } from '../../views/ai-panel/checkpoint/checkpointUtils';
 
 export class AiPanelRpcManager implements AIPanelAPI {
@@ -697,6 +701,54 @@ export class AiPanelRpcManager implements AIPanelAPI {
         const projectPath = pendingReview.reviewState.tempProjectPath;
         console.log(">>> active temp project path", projectPath);
         return projectPath;
+    }
+
+    async compactConversation(params: CompactConversationRequest): Promise<CompactConversationResponse> {
+        const workspaceId = StateMachine.context().projectPath;
+        const threadId = 'default';
+
+        // M05: Reject manual compact if an AI generation is in progress
+        const activeExecution = chatStateStorage.getActiveExecution(workspaceId, threadId);
+        if (activeExecution) {
+            return {
+                success: false,
+                error: 'Cannot compact while a generation is in progress. Please wait for it to complete or stop it first.',
+            };
+        }
+
+        try {
+            const model = await getAnthropicClient(ANTHROPIC_SONNET_4);
+
+            const result = await compactionManager.manualCompact(
+                workspaceId,
+                threadId,
+                model,
+                params.customInstructions
+            );
+
+            console.log(
+                `[RPC] Compacted conversation for workspace: ${workspaceId} ` +
+                `(${result.reductionPercentage.toFixed(1)}% reduction)`
+            );
+
+            return {
+                success: true,
+                originalTokens: result.originalTokens,
+                compactedTokens: result.compactedTokens,
+                reductionPercentage: result.reductionPercentage,
+                summary: result.summary,
+            };
+        } catch (error) {
+            console.error(`[RPC] Compaction failed for workspace: ${workspaceId}`, error);
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Compaction failed',
+            };
+        }
+    }
+
+    async getShowContextUsage(): Promise<boolean> {
+        return workspace.getConfiguration('ballerina').get<boolean>('ai.showContextUsage', true);
     }
 
     async getUsage(): Promise<UsageResponse | undefined> {
