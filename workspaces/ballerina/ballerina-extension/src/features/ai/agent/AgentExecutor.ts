@@ -170,19 +170,6 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
                 console.log(`[AgentExecutor] Skipping didOpen (reusing temp for review continuation)`);
             }
 
-            // 3. Add generation to chat storage (if enabled)
-            this.addGeneration(params.usecase, {
-                isPlanMode: params.isPlanMode,
-                operationType: params.operationType,
-                generationType: 'agent',
-            });
-
-            // Resolve model ONCE — reused for both agent streaming and compaction (M02)
-            const model = await getAnthropicClient(ANTHROPIC_SONNET_4);
-
-            // Bind the authenticated model to the compaction manager
-            compactionManager.bindModel(model);
-
             const workspaceId = this.config.executionContext.projectPath;
             const threadId = 'default';
             const projectState = {
@@ -190,6 +177,14 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
                 tempProjectPath,
                 workingDirectory: workspaceId,
             };
+
+            // Resolve model ONCE — reused for both agent streaming and compaction (M02)
+            const model = await getAnthropicClient(ANTHROPIC_SONNET_4);
+
+            // Bind the authenticated model to the compaction manager
+            compactionManager.bindModel(model);
+
+            const userMessageContent = getUserPrompt(params, tempProjectPath, projects);
 
             // PRE-TURN compaction: compact if context is already above threshold
             // C10: failures are handled gracefully inside checkAndCompact (returns without throwing)
@@ -199,8 +194,16 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
                 threadId,
                 projectState,
                 this.config.abortController.signal,
-                this.config.eventHandler
+                this.config.eventHandler,
+                [ { role: "user", content: userMessageContent } ]
             );
+
+            // 3. Add generation to chat storage (if enabled)
+            this.addGeneration(params.usecase, {
+                isPlanMode: params.isPlanMode,
+                operationType: params.operationType,
+                generationType: 'agent',
+            });
 
             // 4. Get chat history from storage (if enabled) — AFTER pre-turn compaction
             const chatHistory = this.getChatHistory();
@@ -209,8 +212,7 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
             // 5. Build LLM messages with history
             const historyMessages = populateHistoryForAgent(chatHistory);
             const cacheOptions = await getProviderCacheControl();
-            const userMessageContent = getUserPrompt(params, tempProjectPath, projects);
-
+            
             const allMessages: ModelMessage[] = [
                 {
                     role: "system",

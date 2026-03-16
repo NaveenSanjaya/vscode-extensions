@@ -988,7 +988,12 @@ const AIChat: React.FC = () => {
                 }
                 case Command.Compact: {
                     setIsCompacting(true);
-                    const result = await rpcClient.getAiPanelRpcClient().compactConversation({});
+                    const customInstructions = parsedInput.templateId === TemplateId.Wildcard
+                        ? parsedInput.text?.trim() || undefined
+                        : undefined;
+                    const result = await rpcClient.getAiPanelRpcClient().compactConversation(
+                        customInstructions ? { customInstructions } : {}
+                    );
                     if (!result.success) {
                         throw new Error(result.error || 'Compaction failed');
                     }

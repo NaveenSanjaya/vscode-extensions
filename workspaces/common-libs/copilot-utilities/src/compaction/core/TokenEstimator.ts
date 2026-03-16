@@ -56,12 +56,7 @@ export class TokenEstimator {
      * - Otherwise, estimates via callback and adds system/tool overheads
      */
     async estimateTokens(messages: any[]): Promise<number> {
-        // Actual usage data from last LLM call is the most accurate
-        if (this.lastContext?.lastActualInputTokens) {
-            return this.lastContext.lastActualInputTokens;
-        }
-
-        // Estimate using callback
+        // Estimate using callback (with SHA-256 caching for speed)
         const messageTokens = await this.estimateMessageTokens(messages);
 
         const systemTokens = this.lastContext?.systemPromptTokenEstimate ?? 0;

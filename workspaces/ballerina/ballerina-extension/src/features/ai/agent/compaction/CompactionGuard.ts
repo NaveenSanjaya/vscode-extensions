@@ -55,6 +55,20 @@ export interface CompactionGuardConfig {
 export class CompactionGuard {
     private compactionCount: number = 0;
     private _lastCompactionFailed: boolean = false;
+    /**
+     * Tracks the compacted message array returned by the last compaction and the
+     * length of the SDK's accumulated messages at that point.
+     *
+     * Why this is needed:
+     * The Vercel AI SDK's `prepareStep` only uses the returned `messages` for the
+     * NEXT API call. Subsequent `prepareStep` invocations always receive the SDK's
+     * full accumulated history (initialMessages + all step responses), effectively
+     * reverting our compaction. By storing the compacted base here and slicing the
+     * SDK's messages to extract only the NEW additions since the last compaction, we
+     * can rebuild the effective (compact) message array on every call.
+     */
+    private lastCompactedMessages: ModelMessage[] | null = null;
+    private sdkMessagesCountAtLastCompaction: number = 0;
 
     constructor(private config: CompactionGuardConfig) {}
 
@@ -87,13 +101,24 @@ export class CompactionGuard {
             return undefined;
         }
 
+        // Build effective messages: if a previous compaction was done, merge the
+        // compacted base with any new additions the SDK has accumulated since then.
+        // This prevents the SDK from reverting to its full accumulated history.
+        const effectiveMessages = this.buildEffectiveMessages(messages);
+
         // Read actual token count from the most recent completed step.
         // usage.inputTokens is the ground truth — it's what the LLM API actually consumed.
         const lastStep = steps[steps.length - 1];
         const lastInputTokens: number = lastStep.usage?.inputTokens ?? 0;
 
         if (lastInputTokens < this.config.tokenThreshold) {
-            return undefined; // Context is fine, proceed normally
+            // Even when below threshold, return effectiveMessages if a previous compaction
+            // shrank the history — otherwise the SDK would silently undo our compaction by
+            // feeding its full accumulated messages to the next API call.
+            if (this.lastCompactedMessages && effectiveMessages.length < messages.length) {
+                return { messages: effectiveMessages };
+            }
+            return undefined;
         }
 
         console.log(
@@ -111,7 +136,7 @@ export class CompactionGuard {
         }
 
         try {
-            return await this.performCompaction(messages);
+            return await this.performCompaction(effectiveMessages, messages.length);
         } catch (error) {
             console.error('[CompactionGuard] Mid-stream compaction failed:', error);
             this._lastCompactionFailed = true;
@@ -124,10 +149,30 @@ export class CompactionGuard {
     }
 
     /**
+     * Builds the effective message array from the compacted base + new SDK additions.
+     *
+     * The Vercel AI SDK tracks `messages` as:
+     *   initialMessages + allStepResponses (grows monotonically)
+     *
+     * When prepareStep returns { messages: compactedMessages }, the SDK uses them for
+     * the next API call but still accumulates from the original base for future steps.
+     * By slicing the SDK's messages at `sdkMessagesCountAtLastCompaction` we extract
+     * only the new additions, then prepend our compacted base.
+     */
+    private buildEffectiveMessages(sdkMessages: ModelMessage[]): ModelMessage[] {
+        if (!this.lastCompactedMessages) {
+            return sdkMessages;
+        }
+        const newAdditions = sdkMessages.slice(this.sdkMessagesCountAtLastCompaction);
+        return [...this.lastCompactedMessages, ...newAdditions];
+    }
+
+    /**
      * Core compaction: splits messages, summarizes old portion, preserves recent messages.
      */
     private async performCompaction(
-        messages: ModelMessage[]
+        messages: ModelMessage[],
+        sdkMessagesCount: number
     ): Promise<{ messages: ModelMessage[] }> {
         this.config.eventHandler({ type: 'compaction_start' });
 
@@ -172,10 +217,24 @@ The assistant MUST be able to seamlessly continue the task from this summary alo
             throw new Error('CompactionEngine.compact() returned success: false');
         }
 
+        // === EXTRACT unresolved failures from the compacted portion ===
+        // Tool failures that happened in oldMessages won't be in the verbatim preserved
+        // window, so the model might blindly repeat the same failing input. We extract
+        // them deterministically (not relying on LLM summarization) and inject them as
+        // an explicit warning block.
+        const failureNotes = this.extractFailureNotes(oldMessages);
+
         // === BUILD replacement message array ===
-        // Structure: [summary pair] + [task reminder] + [recent tool interactions]
+        // Structure: [summary pair] + [failure notes?] + [task reminder] + [recent tool interactions]
         const compactedMessages: ModelMessage[] = [
             ...compactionResult.compactedMessages,
+            // Inject unresolved tool failures so the model avoids repeating them
+            ...(failureNotes
+                ? [{
+                    role: 'user' as const,
+                    content: failureNotes,
+                }]
+                : []),
             // Re-inject original request so the model remembers what it was working on
             {
                 role: 'user' as const,
@@ -192,6 +251,11 @@ The assistant MUST be able to seamlessly continue the task from this summary alo
         ];
 
         this.compactionCount++;
+
+        // Persist the compacted base so buildEffectiveMessages() can prepend it to
+        // any new SDK additions on subsequent prepareStep calls.
+        this.lastCompactedMessages = compactedMessages;
+        this.sdkMessagesCountAtLastCompaction = sdkMessagesCount;
 
         this.config.eventHandler({
             type: 'compaction_end',
@@ -215,6 +279,105 @@ The assistant MUST be able to seamlessly continue the task from this summary alo
      *
      * Returns `messages.length` to skip compaction if too few messages (<4) remain.
      */
+    /**
+     * Scans the compacted (old) message slice for tool failures that were NOT
+     * subsequently resolved by a successful call to the same tool on the same target.
+     *
+     * Returns a formatted warning string to inject into the replacement messages, or
+     * null if there are no unresolved failures. This is deterministic — it does not
+     * rely on the LLM summarization picking up error details.
+     */
+    private extractFailureNotes(messages: ModelMessage[]): string | null {
+        // Build toolCallId → { toolName, args } from assistant messages
+        const toolCallMap = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+        for (const msg of messages) {
+            if (msg.role !== 'assistant') { continue; }
+            const parts = Array.isArray(msg.content) ? msg.content : [];
+            for (const part of parts as any[]) {
+                if (part?.type === 'tool-call' && part.toolCallId) {
+                    toolCallMap.set(part.toolCallId, {
+                        toolName: part.toolName ?? '(unknown)',
+                        args: part.args ?? {},
+                    });
+                }
+            }
+        }
+
+        // Collect all tool results in order, tagging each as error or success
+        type ToolEvent = { toolCallId: string; toolName: string; target: string; isError: boolean; errorText: string };
+        const events: ToolEvent[] = [];
+        for (const msg of messages) {
+            if (msg.role !== 'tool') { continue; }
+            const parts = Array.isArray(msg.content) ? msg.content : [];
+            for (const part of parts as any[]) {
+                if (part?.type !== 'tool-result') { continue; }
+                const call = toolCallMap.get(part.toolCallId ?? '');
+                const toolName: string = part.toolName ?? call?.toolName ?? '(unknown)';
+                const args: Record<string, unknown> = call?.args ?? {};
+                const target = this.extractTarget(toolName, args);
+                const resultText = typeof part.result === 'string'
+                    ? part.result
+                    : JSON.stringify(part.result ?? '');
+                events.push({
+                    toolCallId: part.toolCallId ?? '',
+                    toolName,
+                    target,
+                    isError: !!part.isError,
+                    errorText: resultText.slice(0, 300),
+                });
+            }
+        }
+
+        // A failure is "resolved" if the same (toolName, target) pair succeeded later
+        const resolvedKeys = new Set<string>();
+        for (let i = 0; i < events.length; i++) {
+            if (events[i].isError) { continue; }
+            const key = `${events[i].toolName}::${events[i].target}`;
+            // Mark any earlier failure with the same key as resolved
+            resolvedKeys.add(key);
+        }
+
+        const unresolvedFailures = events.filter(e => {
+            if (!e.isError) { return false; }
+            return !resolvedKeys.has(`${e.toolName}::${e.target}`);
+        });
+
+        if (unresolvedFailures.length === 0) { return null; }
+
+        const lines = [
+            '[Tool failures from compacted history — these exact inputs previously failed.',
+            ' Read the current file state before retrying rather than repeating the same call.]',
+            '',
+        ];
+        for (const f of unresolvedFailures) {
+            const call = toolCallMap.get(f.toolCallId);
+            const argSummary = call ? this.formatFailureArgs(f.toolName, call.args) : f.target;
+            lines.push(`• ${f.toolName}: ${argSummary}`);
+            lines.push(`  Error: ${f.errorText}`);
+        }
+
+        return lines.join('\n');
+    }
+
+    /** Extracts a short human-readable "target" string used for dedup (e.g. file path). */
+    private extractTarget(toolName: string, args: Record<string, unknown>): string {
+        const pathKey = ['path', 'filePath', 'file_path', 'target_file', 'file', 'name']
+            .find(k => typeof args[k] === 'string');
+        return pathKey ? String(args[pathKey]) : toolName;
+    }
+
+    /** Formats the key failure args for display in the warning block. */
+    private formatFailureArgs(toolName: string, args: Record<string, unknown>): string {
+        const target = this.extractTarget(toolName, args);
+        // For edit tools, also show the old_string that failed to match
+        const oldStr = args['old_string'] ?? args['old_str'] ?? args['original_snippet'];
+        if (oldStr && typeof oldStr === 'string') {
+            const preview = oldStr.replace(/\n/g, '\\n').slice(0, 100);
+            return `${target} — old_string: "${preview}${oldStr.length > 100 ? '...' : ''}"`;
+        }
+        return target;
+    }
+
     private findCleanSplitPoint(messages: ModelMessage[], targetIndex: number): number {
         let index = targetIndex;
 

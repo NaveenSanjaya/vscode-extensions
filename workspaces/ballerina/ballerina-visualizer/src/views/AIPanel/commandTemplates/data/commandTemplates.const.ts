@@ -137,6 +137,11 @@ export const commandTemplates = {
             id: TemplateId.CompactConversation,
             text: '',
             placeholders: [],
+        },
+        {
+            id: TemplateId.Wildcard,
+            text: '${instructions}',
+            placeholders: [{ id: 'instructions', display: 'custom instructions', multiline: false }],
         }
     ]
 } as const;

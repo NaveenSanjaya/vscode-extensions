@@ -74,6 +74,9 @@ export const placeholderTags: PlaceholderTagMap = {
         }
     },
     [Command.Compact]: {
-        'compact-conversation': {}
+        'compact-conversation': {},
+        'wildcard': {
+            instructions: [],
+        }
     }
 };

@@ -135,14 +135,19 @@ export class CompactionManager {
         threadId: string,
         projectState?: ProjectStateContext,
         abortSignal?: AbortSignal,
-        eventHandler?: (event: any) => void
+        eventHandler?: (event: any) => void,
+        currentTurnMessages?: any[]
     ): Promise<void> {
         const history = chatStateStorage.getChatHistoryForLLM(workspaceId, threadId);
         if (!history || history.length === 0) {
             return;
         }
 
-        const shouldCompact = await this.engine.shouldCompact(history);
+        const messagesToEstimate = currentTurnMessages 
+            ? [...history, ...currentTurnMessages] 
+            : history;
+
+        const shouldCompact = await this.engine.shouldCompact(messagesToEstimate);
         if (!shouldCompact) {
             return;
         }
