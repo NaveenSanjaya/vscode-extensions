@@ -58,12 +58,15 @@ export function prepareMessagesForSummarization(messages: any[]): any[] {
                             text: `[Tool Call: ${block.toolName || 'unknown'} with args ${argsStr.substring(0, 100)}...]`,
                         };
                     }
-                    // C05: Inline tool-result blocks
+                    // C05: Inline tool-result blocks with "middle-out" truncation
                     if (block.type === 'tool-result') {
                         const resultStr = block.result != null ? JSON.stringify(block.result) : '';
-                        const truncated = resultStr.length > 500
-                            ? resultStr.substring(0, 500) + '...'
-                            : resultStr;
+                        let truncated = resultStr;
+                        if (resultStr.length > 500) {
+                            truncated = resultStr.substring(0, 200) + 
+                                        '\n\n...[omitted]...\n\n' + 
+                                        resultStr.substring(resultStr.length - 300);
+                        }
                         return {
                             type: 'text',
                             text: `[Tool Result: ${truncated}]`,
@@ -95,9 +98,12 @@ function convertToolMessageToText(toolMsg: any): any {
         .map((item: any) => {
             if (item.type === 'tool-result') {
                 const resultStr = item.result != null ? JSON.stringify(item.result) : '';
-                const truncated = resultStr.length > 1000
-                    ? resultStr.substring(0, 1000) + '...'
-                    : resultStr;
+                let truncated = resultStr;
+                if (resultStr.length > 1000) {
+                    truncated = resultStr.substring(0, 400) + 
+                                '\n\n...[omitted]...\n\n' + 
+                                resultStr.substring(resultStr.length - 600);
+                }
                 return `[Tool: ${item.toolName || 'unknown'} returned: ${truncated}]`;
             }
             const itemStr = JSON.stringify(item) || '';

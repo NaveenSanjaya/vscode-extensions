@@ -469,6 +469,19 @@ export class ChatStateStorage {
     }
 
     /**
+     * Check if the thread contains compacted history
+     * @param workspaceId Workspace identifier
+     * @param threadId Thread identifier
+     * @returns boolean
+     */
+    hasCompactedHistory(workspaceId: string, threadId: string): boolean {
+        const thread = this.getOrCreateThread(workspaceId, threadId);
+        return thread.generations.some(
+            gen => gen.metadata?.compactionMetadata?.isCompactedGeneration === true
+        );
+    }
+
+    /**
      * Find checkpoint by ID
      * @param workspaceId Workspace identifier
      * @param threadId Thread identifier

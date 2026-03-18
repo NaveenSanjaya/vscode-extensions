@@ -302,8 +302,11 @@ function sendAIPanelNotification(msg: ChatNotify): void {
     RPCLayer._messenger.sendNotification(onChatNotify, { type: "webview", webviewType: AiPanelWebview.viewType }, msg);
 }
 
-export function sendUsageMetricsNotification(usage: { inputTokens: number; cacheCreationInputTokens: number; cacheReadInputTokens: number; outputTokens: number }): void {
-    sendAIPanelNotification({ type: "usage_metrics", usage });
+export function sendUsageMetricsNotification(
+    usage: { inputTokens: number; cacheCreationInputTokens: number; cacheReadInputTokens: number; outputTokens: number },
+    breakdown?: { systemInstructions: number; toolDefinitions: number; reservedOutput: number; messages: number; toolResults: number },
+): void {
+    sendAIPanelNotification({ type: "usage_metrics", usage, breakdown });
 }
 
 export function sendConfigChangeNotification(key: 'showContextUsage', value: boolean): void {

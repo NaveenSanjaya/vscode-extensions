@@ -98,7 +98,7 @@ export function createWebviewEventHandler(command: Command): CopilotEventHandler
                 // Ignore evals-specific events in webview
                 break;
             case "usage_metrics":
-                sendUsageMetricsNotification(event.usage);
+                sendUsageMetricsNotification(event.usage, event.breakdown);
                 break;
             case "diagnostics":
                 sendDiagnosticMessageNotification(event.diagnostics);

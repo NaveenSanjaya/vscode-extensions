@@ -426,6 +426,13 @@ export interface UsageMetricsEvent {
         cacheReadInputTokens: number;
         outputTokens: number;
     };
+    breakdown?: {
+        systemInstructions: number;
+        toolDefinitions: number;
+        reservedOutput: number;
+        messages: number;
+        toolResults: number;
+    };
 }
 
 export interface TaskApprovalRequest {

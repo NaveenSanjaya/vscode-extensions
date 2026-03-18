@@ -136,7 +136,7 @@ type FooterProps = {
     isAutoApproveEnabled?: boolean;
     onDisableAutoApprove?: () => void;
     disabled?: boolean;
-    contextUsage?: { inputTokens: number; percentage: number } | null;
+    contextUsage?: { inputTokens: number; percentage: number; breakdown?: { systemInstructions: number; toolDefinitions: number; reservedOutput: number; messages: number; toolResults: number } } | null;
 };
 
 const Footer: React.FC<FooterProps> = ({

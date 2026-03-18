@@ -51,6 +51,39 @@ import { getHashedProjectId } from "../../telemetry/common/project-id";
 import { workspace } from 'vscode';
 import { runningServicesManager } from './tools/running-service-manager';
 
+const RESERVED_OUTPUT_TOKENS = 8_192;
+
+/** Estimate character length of a message's content for proportional token breakdown. */
+function msgCharLen(msg: ModelMessage): number {
+    return JSON.stringify(msg.content).length;
+}
+
+/**
+ * Estimates per-category token breakdown by scaling character-based proportions to the
+ * actual API-reported inputTokens total. The grand total is always exact; per-category
+ * values are ~75-85% accurate.
+ */
+function computeTokenBreakdown(
+    baseMessages: ModelMessage[],
+    accToolCallChars: number,
+    accToolResultChars: number,
+    inputTokens: number,
+): { systemInstructions: number; toolDefinitions: number; reservedOutput: number; messages: number; toolResults: number } {
+    const systemChars = baseMessages.filter(m => m.role === 'system').reduce((s, m) => s + msgCharLen(m), 0);
+    const baseConvChars = baseMessages.filter(m => m.role === 'user' || m.role === 'assistant').reduce((s, m) => s + msgCharLen(m), 0);
+    const baseToolChars = baseMessages.filter(m => m.role === 'tool').reduce((s, m) => s + msgCharLen(m), 0);
+
+    const convChars = baseConvChars + accToolCallChars;
+    const toolChars = baseToolChars + accToolResultChars;
+    const totalChars = systemChars + convChars + toolChars || 1;
+
+    const systemInstructions = Math.round(inputTokens * systemChars / totalChars);
+    const messages = Math.round(inputTokens * convChars / totalChars);
+    const toolResults = Math.round(inputTokens * toolChars / totalChars);
+    const toolDefinitions = Math.max(0, inputTokens - systemInstructions - messages - toolResults - RESERVED_OUTPUT_TOKENS);
+    return { systemInstructions, toolDefinitions, reservedOutput: RESERVED_OUTPUT_TOKENS, messages, toolResults };
+}
+
 /**
  * Determines which packages have been affected by analyzing modified files
  * Returns temp directory package paths for use with Language Server semantic diff API
@@ -239,6 +272,10 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
                 runningServices: runningServicesManager,
             });
 
+            // Accumulate tool call/result character counts across steps for breakdown estimation
+            let accToolCallChars = 0;
+            let accToolResultChars = 0;
+
             // === MID-STREAM COMPACTION GUARD ===
             // Watches actual inputTokens between steps and compacts when threshold is reached.
             // Uses 80% of the context window as the mid-stream trigger point.
@@ -269,20 +306,26 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
 
                 // Emit per-step token usage for context usage widget + observability
                 onStepFinish: (step) => {
+                    // Accumulate tool call/result chars for per-category breakdown estimation
+                    accToolCallChars += JSON.stringify(step.toolCalls ?? []).length;
+                    accToolResultChars += JSON.stringify(step.toolResults ?? []).length;
+
                     console.log(
                         `[AgentExecutor] Step ${step.stepNumber} complete: ` +
                         `${step.usage?.inputTokens ?? 0} input tokens, ` +
                         `finishReason: ${step.finishReason}`
                     );
                     if (step.usage) {
+                        const inputTokens = step.usage.inputTokens || 0;
                         this.config.eventHandler({
                             type: "usage_metrics",
                             usage: {
-                                inputTokens: step.usage.inputTokens || 0,
+                                inputTokens,
                                 cacheCreationInputTokens: (step.usage as any).cacheCreationInputTokens || 0,
                                 cacheReadInputTokens: (step.usage as any).cacheReadInputTokens || 0,
                                 outputTokens: step.usage.outputTokens || 0,
                             },
+                            breakdown: computeTokenBreakdown(allMessages, accToolCallChars, accToolResultChars, inputTokens),
                         });
                     }
                 },
@@ -313,6 +356,11 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
             try {
                 for await (const part of fullStream) {
                     await this.handleStreamPart(part, streamContext);
+                }
+
+                // Check if context was exhausted mid-stream and update context BEFORE handleStreamFinish logic
+                if (compactionGuard.lastCompactionFailed) {
+                    streamContext.compactionFailedMidStream = true;
                 }
 
                 // Check if abort was called after stream completed
@@ -387,10 +435,11 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
             try {
                 const totalUsage = await usage;
                 if (totalUsage) {
+                    const toolDefinitionsChars = JSON.stringify(tools).length;
                     compactionManager.updateTokenContext(
                         totalUsage.inputTokens ?? 0,
                         Math.ceil(getSystemPrompt(projects, params.operationType).length / 4),
-                        2000  // Conservative estimate for tool definitions
+                        Math.ceil(toolDefinitionsChars / 4) // Dynamic estimate for tool definitions
                     );
                 }
             } catch (usageError) {
@@ -519,6 +568,18 @@ Generation stopped by user. The last in-progress task was not saved. Files have 
         const finalResponse = await context.response;
         const assistantMessages = finalResponse.messages || [];
         const tempProjectPath = context.ctx.tempProjectPath!;
+
+        // Check if mid-stream compaction forcefully stopped the model
+        if (context.compactionFailedMidStream) {
+            assistantMessages.push({
+                role: 'assistant',
+                content: `\n\n> **Notice:** The context window limit was reached mid-task, and the generation was paused cleanly. Please review the current state and issue a new prompt to continue where I left off.`
+            });
+            context.eventHandler({
+                type: 'content_block',
+                content: `\n\n> **Notice:** The context window limit was reached mid-task, and the generation was paused cleanly. Please review the current state and issue a new prompt to continue where I left off.`
+            });
+        }
 
         // Run final diagnostics
         const finalDiagnostics = await checkCompilationErrors(tempProjectPath);

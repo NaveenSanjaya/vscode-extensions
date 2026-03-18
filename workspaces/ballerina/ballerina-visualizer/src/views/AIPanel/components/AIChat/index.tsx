@@ -188,7 +188,11 @@ const AIChat: React.FC = () => {
     const [usage, setUsage] = useState<{ remainingUsagePercentage: number; resetsIn: number } | null>(null);
     const [isUsageExceeded, setIsUsageExceeded] = useState(false);
 
-    const [contextUsage, setContextUsage] = useState<{ inputTokens: number; percentage: number } | null>(null);
+    const [contextUsage, setContextUsage] = useState<{
+        inputTokens: number;
+        percentage: number;
+        breakdown?: { systemInstructions: number; toolDefinitions: number; reservedOutput: number; messages: number; toolResults: number };
+    } | null>(null);
     const [showContextUsage, setShowContextUsage] = useState(true);
 
     //TODO: Need a better way of storing data related to last generation to be in the repair state.
@@ -640,7 +644,8 @@ const AIChat: React.FC = () => {
             const inputTokens = (response as any).usage?.inputTokens ?? 0;
             const PRE_TURN_THRESHOLD = 178_808;
             const percentage = Math.min(100, Math.round((inputTokens / PRE_TURN_THRESHOLD) * 100));
-            setContextUsage({ inputTokens, percentage });
+            const breakdown = (response as any).breakdown;
+            setContextUsage({ inputTokens, percentage, breakdown });
 
         } else if (type === "config_change") {
             if ((response as any).key === 'showContextUsage') {

@@ -48,7 +48,7 @@ import {
 } from "@wso2/ballerina-core";
 import * as fs from 'fs';
 import path from "path";
-import { workspace } from 'vscode';
+import { window, workspace } from 'vscode';
 
 import { isNumber } from "lodash";
 import { getServiceDeclarationNames } from "../../../src/features/ai/documentation/utils";
@@ -586,6 +586,12 @@ export class AiPanelRpcManager implements AIPanelAPI {
         const found = chatStateStorage.findCheckpoint(workspaceId, threadId, params.checkpointId);
 
         if (!found) {
+            if (chatStateStorage.hasCompactedHistory(workspaceId, threadId)) {
+                window.showWarningMessage(
+                    "This conversation was compacted to manage memory. Undo points prior to compaction are unavailable."
+                );
+                throw new Error("Checkpoint unavailable due to compaction");
+            }
             throw new Error(`Checkpoint ${params.checkpointId} not found`);
         }
 
