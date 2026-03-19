@@ -99,7 +99,7 @@ const ProgressFill = styled.div<{ $fillWidth: string }>`
     top: 0;
     left: 0;
     height: 100%;
-    width: ${(props: { $fillWidth: string }) => props.$fillWidth};
+    width: ${({ $fillWidth }: { $fillWidth: string }) => $fillWidth};
     background: var(--vscode-progressBar-background);
     opacity: 1;
     border-radius: 2px;
@@ -159,7 +159,7 @@ const ContextUsageWidget: React.FC<ContextUsageWidgetProps> = ({ percentage, inp
     const filled = (clampedPct / 100) * circumference;
     const gap = circumference - filled;
 
-    const thresholdK = Math.round(PRE_TURN_THRESHOLD / 1000);
+    const maxContextK = Math.round(MAX_CONTEXT_WINDOW / 1000);
 
     const scheduleShow = () => {
         clearTimeout(hideTimer.current!);
@@ -208,7 +208,7 @@ const ContextUsageWidget: React.FC<ContextUsageWidgetProps> = ({ percentage, inp
                 <TooltipPopup onMouseEnter={scheduleShow} onMouseLeave={scheduleHide}>
                     <TooltipTitle>Context Window</TooltipTitle>
                     <TooltipSubtitle>
-                        {formatK(inputTokens)} / {thresholdK}K tokens &bull; {clampedPct}%
+                        {formatK(inputTokens)} / {maxContextK}K tokens &bull; {clampedPct}%
                     </TooltipSubtitle>
 
                     <ProgressTrack>

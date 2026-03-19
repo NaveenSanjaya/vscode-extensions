@@ -642,8 +642,8 @@ const AIChat: React.FC = () => {
 
         } else if (type === "usage_metrics") {
             const inputTokens = (response as any).usage?.inputTokens ?? 0;
-            const PRE_TURN_THRESHOLD = 178_808;
-            const percentage = Math.min(100, Math.round((inputTokens / PRE_TURN_THRESHOLD) * 100));
+            const MAX_CONTEXT_WINDOW = 200_000;
+            const percentage = Math.min(100, Math.round((inputTokens / MAX_CONTEXT_WINDOW) * 100));
             const breakdown = (response as any).breakdown;
             setContextUsage({ inputTokens, percentage, breakdown });
 
