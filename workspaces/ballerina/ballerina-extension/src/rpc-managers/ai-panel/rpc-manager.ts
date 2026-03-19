@@ -754,7 +754,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
     }
 
     async getShowContextUsage(): Promise<boolean> {
-        return workspace.getConfiguration('ballerina').get<boolean>('ai.showContextUsage', true);
+        return workspace.getConfiguration('ballerina').get<boolean>('ai.showContextUsage', false);
     }
 
     async getUsage(): Promise<UsageResponse | undefined> {

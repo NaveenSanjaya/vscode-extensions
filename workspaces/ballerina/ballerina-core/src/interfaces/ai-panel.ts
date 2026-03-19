@@ -26,7 +26,7 @@ export enum Command {
     OpenAPI = '/openapi',
     Agent = '/agent', // Internal use only - agent is the default behavior
     Doc = '/doc',
-    Compact = '/compact'
+    // Compact = '/compact'
 }
 
 export enum TemplateId {
@@ -55,5 +55,5 @@ export enum TemplateId {
     GenerateUserDoc = 'generate-user-doc',
 
     // Command.Compact
-    CompactConversation = 'compact-conversation'
+    // CompactConversation = 'compact-conversation'
 }

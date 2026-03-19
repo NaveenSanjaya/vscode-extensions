@@ -262,7 +262,7 @@
                 },
                 "ballerina.ai.showContextUsage": {
                     "type": "boolean",
-                    "default": true,
+                    "default": false,
                     "description": "Show context usage indicator in the AI chat input footer."
                 }
             }

@@ -73,10 +73,10 @@ export const placeholderTags: PlaceholderTagMap = {
             servicename: [],
         }
     },
-    [Command.Compact]: {
-        'compact-conversation': {},
-        'wildcard': {
-            instructions: [],
-        }
-    }
+    // [Command.Compact]: {
+    //     'compact-conversation': {},
+    //     'wildcard': {
+    //         instructions: [],
+    //     }
+    // }
 };

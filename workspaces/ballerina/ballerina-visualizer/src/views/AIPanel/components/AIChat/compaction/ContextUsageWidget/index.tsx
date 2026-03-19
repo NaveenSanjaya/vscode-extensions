@@ -94,12 +94,12 @@ const ProgressTrack = styled.div`
     position: relative;
 `;
 
-const ProgressFill = styled.div<{ fillWidth: string }>`
+const ProgressFill = styled.div<{ $fillWidth: string }>`
     position: absolute;
     top: 0;
     left: 0;
     height: 100%;
-    width: ${(props: { fillWidth: string }) => props.fillWidth};
+    width: ${(props: { $fillWidth: string }) => props.$fillWidth};
     background: var(--vscode-progressBar-background);
     opacity: 1;
     border-radius: 2px;
@@ -138,7 +138,7 @@ function formatK(tokens: number): string {
 }
 
 function toPct(tokens: number): string {
-    return (tokens / MAX_CONTEXT_WINDOW * 100).toFixed(1) + "%";
+    return (tokens / PRE_TURN_THRESHOLD * 100).toFixed(1) + "%";
 }
 
 // ---- Component ----
@@ -212,7 +212,7 @@ const ContextUsageWidget: React.FC<ContextUsageWidgetProps> = ({ percentage, inp
                     </TooltipSubtitle>
 
                     <ProgressTrack>
-                        <ProgressFill fillWidth={`${clampedPct}%`} />
+                        <ProgressFill $fillWidth={`${clampedPct}%`} />
                     </ProgressTrack>
 
                     {breakdown && (

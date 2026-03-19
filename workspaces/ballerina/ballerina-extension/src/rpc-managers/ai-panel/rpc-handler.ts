@@ -148,7 +148,7 @@ export function registerAiPanelRpcHandlers(messenger: Messenger) {
     // Notify webview immediately when the showContextUsage setting is toggled
     workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('ballerina.ai.showContextUsage')) {
-            const value = workspace.getConfiguration('ballerina').get<boolean>('ai.showContextUsage', true);
+            const value = workspace.getConfiguration('ballerina').get<boolean>('ai.showContextUsage', false);
             sendConfigChangeNotification('showContextUsage', value);
         }
     });

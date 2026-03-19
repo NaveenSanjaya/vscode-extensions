@@ -65,6 +65,7 @@ function msgCharLen(msg: ModelMessage): number {
  */
 function computeTokenBreakdown(
     baseMessages: ModelMessage[],
+    tools: any,
     accToolCallChars: number,
     accToolResultChars: number,
     inputTokens: number,
@@ -75,12 +76,13 @@ function computeTokenBreakdown(
 
     const convChars = baseConvChars + accToolCallChars;
     const toolChars = baseToolChars + accToolResultChars;
-    const totalChars = systemChars + convChars + toolChars || 1;
+    const toolDefsChars = JSON.stringify(tools ?? {}).length;
+    const totalChars = systemChars + convChars + toolChars + toolDefsChars || 1;
 
     const systemInstructions = Math.round(inputTokens * systemChars / totalChars);
     const messages = Math.round(inputTokens * convChars / totalChars);
     const toolResults = Math.round(inputTokens * toolChars / totalChars);
-    const toolDefinitions = Math.max(0, inputTokens - systemInstructions - messages - toolResults - RESERVED_OUTPUT_TOKENS);
+    const toolDefinitions = Math.max(0, inputTokens - systemInstructions - messages - toolResults);
     return { systemInstructions, toolDefinitions, reservedOutput: RESERVED_OUTPUT_TOKENS, messages, toolResults };
 }
 
@@ -325,7 +327,7 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
                                 cacheReadInputTokens: (step.usage as any).cacheReadInputTokens || 0,
                                 outputTokens: step.usage.outputTokens || 0,
                             },
-                            breakdown: computeTokenBreakdown(allMessages, accToolCallChars, accToolResultChars, inputTokens),
+                            breakdown: computeTokenBreakdown(allMessages, tools, accToolCallChars, accToolResultChars, inputTokens),
                         });
                     }
                 },

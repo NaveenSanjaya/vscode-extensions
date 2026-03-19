@@ -193,7 +193,7 @@ const AIChat: React.FC = () => {
         percentage: number;
         breakdown?: { systemInstructions: number; toolDefinitions: number; reservedOutput: number; messages: number; toolResults: number };
     } | null>(null);
-    const [showContextUsage, setShowContextUsage] = useState(true);
+    const [showContextUsage, setShowContextUsage] = useState(false);
 
     //TODO: Need a better way of storing data related to last generation to be in the repair state.
     const currentDiagnosticsRef = useRef<DiagnosticEntry[]>([]);
@@ -991,6 +991,7 @@ const AIChat: React.FC = () => {
                     }
                     break;
                 }
+                /*
                 case Command.Compact: {
                     setIsCompacting(true);
                     const customInstructions = parsedInput.templateId === TemplateId.Wildcard
@@ -1027,6 +1028,7 @@ const AIChat: React.FC = () => {
                     setCurrentGeneratingPromptIndex(-1);
                     break;
                 }
+                */
             }
         }
     }
