@@ -198,7 +198,8 @@ export class ChatStateStorage {
         threadId: string,
         userPrompt: string,
         metadata: Partial<GenerationMetadata>,
-        id?: string
+        id?: string,
+        skipCheckpoint?: boolean
     ): Generation {
         const thread = this.getOrCreateThread(workspaceId, threadId);
 
@@ -226,10 +227,12 @@ export class ChatStateStorage {
 
         console.log(`[ChatStateStorage] Added generation: ${generation.id} to thread: ${threadId}`);
 
-        // Capture checkpoint for this generation asynchronously
-        this.captureCheckpointForGeneration(workspaceId, threadId, generation.id).catch(error => {
-            console.error('[ChatStateStorage] Failed to capture checkpoint:', error);
-        });
+        // Capture checkpoint for this generation asynchronously (skip for synthetic compacted generations)
+        if (!skipCheckpoint) {
+            this.captureCheckpointForGeneration(workspaceId, threadId, generation.id).catch(error => {
+                console.error('[ChatStateStorage] Failed to capture checkpoint:', error);
+            });
+        }
 
         return generation;
     }
@@ -457,15 +460,9 @@ export class ChatStateStorage {
      */
     getCheckpoints(workspaceId: string, threadId: string): Checkpoint[] {
         const thread = this.getOrCreateThread(workspaceId, threadId);
-        const checkpoints: Checkpoint[] = [];
-
-        for (const generation of thread.generations) {
-            if (generation.checkpoint) {
-                checkpoints.push(generation.checkpoint);
-            }
-        }
-
-        return checkpoints;
+        return thread.generations
+            .filter(g => g.checkpoint && !g.metadata?.compactionMetadata?.isCompactedGeneration)
+            .map(g => g.checkpoint!);
     }
 
     /**

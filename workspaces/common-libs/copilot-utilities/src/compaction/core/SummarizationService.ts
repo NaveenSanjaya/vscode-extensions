@@ -58,7 +58,19 @@ export class SummarizationService {
         if (preparedMessages.length === 0 || preparedMessages[preparedMessages.length - 1].role !== 'user') {
             preparedMessages.push({
                 role: 'user',
-                content: 'Please provide your summary of the conversation above, following the instructions in the system prompt.',
+                content: [
+                    '--- END OF CONVERSATION TO SUMMARIZE ---',
+                    '',
+                    'STOP. Do NOT continue the task above.',
+                    'You are now in SUMMARIZATION MODE.',
+                    '',
+                    'Generate a structured summary of the conversation above.',
+                    'Your ENTIRE response MUST be wrapped in <summary>...</summary> tags.',
+                    'Do NOT output anything outside of those tags.',
+                    'Do NOT call any tools.',
+                    'Do NOT continue the coding task.',
+                    'Begin your response with <analysis> then end with <summary>...</summary>.',
+                ].join('\n'),
             });
         }
 

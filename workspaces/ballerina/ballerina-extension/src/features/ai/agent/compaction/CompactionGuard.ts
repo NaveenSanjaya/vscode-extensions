@@ -40,6 +40,13 @@ export interface CompactionGuardConfig {
     projectState: ProjectStateContext;
     /** M05: AbortSignal to propagate cancellation into the summarization LLM call */
     abortSignal?: AbortSignal;
+    /**
+     * Called after successful mid-stream compaction to persist the compacted summary
+     * to chatStateStorage. Receives only compactionResult.compactedMessages (the LLM
+     * summary pair), NOT the full replacement array with recentMessages — those are
+     * saved normally when the generation completes via updateGeneration.
+     */
+    persistCallback?: (compactedMessages: ModelMessage[], metadata?: any) => Promise<void>;
 }
 
 /**
@@ -215,6 +222,17 @@ The assistant MUST be able to seamlessly continue the task from this summary alo
 
         if (!compactionResult.success) {
             throw new Error('CompactionEngine.compact() returned success: false');
+        }
+
+        // Persist the summary of old history to chatStateStorage so the next turn
+        // doesn't need to compact again (eliminates double compaction).
+        // Non-fatal: if this fails, the in-memory compaction still works for this turn.
+        if (this.config.persistCallback) {
+            try {
+                await this.config.persistCallback(compactionResult.compactedMessages, compactionResult.metadata);
+            } catch (err) {
+                console.error('[CompactionGuard] Failed to persist mid-stream compaction to storage:', err);
+            }
         }
 
         // === EXTRACT unresolved failures from the compacted portion ===

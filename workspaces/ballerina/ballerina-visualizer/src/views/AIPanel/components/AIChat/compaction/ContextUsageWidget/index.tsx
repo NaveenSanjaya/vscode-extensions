@@ -71,6 +71,16 @@ const TooltipPopup = styled.div`
     color: var(--vscode-editorHoverWidget-foreground);
     font-size: 12px;
     white-space: nowrap;
+
+    /* Bridge the 8px gap so mouse moving from widget to tooltip doesn't trigger onMouseLeave */
+    &::after {
+        content: '';
+        position: absolute;
+        bottom: -8px;
+        left: 0;
+        right: 0;
+        height: 8px;
+    }
 `;
 
 const TooltipTitle = styled.div`

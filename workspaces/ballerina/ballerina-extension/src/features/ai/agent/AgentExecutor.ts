@@ -283,13 +283,21 @@ export class AgentExecutor extends AICommandExecutor<GenerateAgentCodeRequest> {
             // Uses 80% of the context window as the mid-stream trigger point.
             const compactionGuard = new CompactionGuard({
                 engine: compactionManager.getEngine(),
-                tokenThreshold: Math.floor(200_000 * 0.80),  // 160K tokens = 80% of context window
+                tokenThreshold: Math.floor(200_000 * 0.30),  // 160K tokens = 80% of context window
                 maxCompactionAttempts: 3,
                 preserveRecentMessageCount: 6,  // Keep last 3 tool-call + tool-result pairs
                 eventHandler: this.config.eventHandler,
                 originalUserMessage: JSON.stringify(userMessageContent),
                 projectState,
                 abortSignal: this.config.abortController.signal,
+                persistCallback: (compactedMessages, metadata) =>
+                    compactionManager.persistMidStreamCompaction(
+                        workspaceId,
+                        threadId,
+                        this.config.generationId,
+                        compactedMessages,
+                        metadata
+                    ),
             });
 
             // Stream LLM response with mid-stream compaction and dual stop conditions

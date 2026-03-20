@@ -280,12 +280,16 @@ export class CompactionManager {
      * 2. Clear all old generations from the thread
      * 3. Create a synthetic 'compacted' generation with the new messages
      * 4. C15: Store compaction metadata on the generation
+     *
+     * @param preserveGenerationId - If provided (mid-stream case), the in-progress generation
+     *   with this ID is re-added after clearing so it can be populated when the turn ends.
      */
     private async replaceThreadHistory(
         workspaceId: string,
         threadId: string,
         compactedMessages: any[],
-        metadata?: CompactionMetadata
+        metadata?: CompactionMetadata,
+        preserveGenerationId?: string
     ): Promise<void> {
         // M07: Backup before clearing
         const { backupPath, generationIds } = await this.backupPreCompactionHistory(workspaceId, threadId);
@@ -297,18 +301,25 @@ export class CompactionManager {
 
         const thread = chatStateStorage.getOrCreateThread(workspaceId, threadId);
 
+        // Capture in-progress generation before clearing (mid-stream case only)
+        const preservedGen = preserveGenerationId
+            ? thread.generations.find(g => g.id === preserveGenerationId)
+            : undefined;
+
         // Clear old generations (direct mutation — getOrCreateThread returns live reference)
         thread.generations = [];
 
         const generationId = 'compact-' + Date.now();
 
-        // Create synthetic generation to hold the compacted history
+        // Create synthetic generation to hold the compacted history.
+        // skipCheckpoint=true: compacted generations must not create spurious checkpoints.
         chatStateStorage.addGeneration(
             workspaceId,
             threadId,
             '[Compacted History]',
             { isPlanMode: false, generationType: 'agent' },
-            generationId
+            generationId,
+            true
         );
 
         // Update with compacted messages, mark accepted so it's included in future LLM context
@@ -331,10 +342,43 @@ export class CompactionManager {
             }
         );
 
+        // Re-add the in-progress generation after the compacted summary (mid-stream case).
+        // Its modelMessages are still empty here — they'll be populated by updateGeneration
+        // when the turn ends via AgentExecutor's stream handler.
+        if (preservedGen) {
+            thread.generations.push(preservedGen);
+            console.log(`[CompactionManager] Re-added in-progress generation: ${preserveGenerationId}`);
+        }
+
         console.log(
             `[CompactionManager] Replaced ${generationIds.length} generations with compacted history. ` +
             `Backup: ${backupPath}`
         );
+    }
+
+    /**
+     * Called by CompactionGuard after a successful mid-stream compaction.
+     * Persists the compacted summary of OLD history to chatStateStorage,
+     * preserving the current in-progress generation so it can be populated
+     * normally when the turn ends.
+     *
+     * This eliminates double compaction: because storage is updated here,
+     * the next turn's pre-turn compaction will see an already-compacted
+     * history and won't fire again.
+     *
+     * @param currentGenerationId - The in-progress generation ID to preserve
+     * @param compactedMessages   - compactionResult.compactedMessages (summary only,
+     *   NOT the full array with recentMessages — those are saved when the turn ends)
+     */
+    async persistMidStreamCompaction(
+        workspaceId: string,
+        threadId: string,
+        currentGenerationId: string,
+        compactedMessages: any[],
+        metadata?: CompactionMetadata
+    ): Promise<void> {
+        await this.replaceThreadHistory(workspaceId, threadId, compactedMessages, metadata, currentGenerationId);
+        console.log(`[CompactionManager] Mid-stream compaction persisted to storage. Preserved generation: ${currentGenerationId}`);
     }
 }
 

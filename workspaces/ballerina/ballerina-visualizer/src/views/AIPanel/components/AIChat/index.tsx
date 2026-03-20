@@ -326,10 +326,9 @@ const AIChat: React.FC = () => {
             // Call backend to restore checkpoint (files + chat history)
             await rpcClient.getAiPanelRpcClient().restoreCheckpoint({ checkpointId });
 
-            // Fetch updated messages from backend
-            const updatedMessages = await rpcClient.getAiPanelRpcClient().getChatMessages();
-            const uiMessages = convertToUIMessages(updatedMessages);
-            setMessages(uiMessages);
+            // intentionally NOT re-fetching messages from backend here —
+            // the frontend chat history stays visible so the user can see
+            // what happened. Only checkpoint availability is updated.
 
             // Update available checkpoint IDs after restore (checkpoints are trimmed during restore)
             const checkpoints = await rpcClient.getAiPanelRpcClient().getCheckpoints();
@@ -639,6 +638,10 @@ const AIChat: React.FC = () => {
 
         } else if (type === "compaction_end" || type === "compaction_failed") {
             setIsCompacting(false);
+            // Compaction wipes pre-compaction generations — refresh so restore buttons disappear
+            rpcClient.getAiPanelRpcClient().getCheckpoints()
+                .then(cps => setAvailableCheckpointIds(new Set(cps.map(cp => cp.id))))
+                .catch(() => {});
 
         } else if (type === "usage_metrics") {
             const inputTokens = (response as any).usage?.inputTokens ?? 0;
