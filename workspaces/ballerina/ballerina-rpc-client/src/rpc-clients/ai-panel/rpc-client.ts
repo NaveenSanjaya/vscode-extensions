@@ -117,6 +117,12 @@ import {
     StopRunningServiceRequest,
     RunServiceRequest,
     runService,
+    listThreads,
+    switchThread,
+    SwitchThreadRequest,
+    deleteThread,
+    DeleteThreadRequest,
+    ThreadSummary,
 } from "@wso2/ballerina-core";
 import { HOST_EXTENSION } from "vscode-messenger-common";
 import { Messenger } from "vscode-messenger-webview";
@@ -360,5 +366,17 @@ export class AiPanelRpcClient implements AIPanelAPI {
 
     runService(params: RunServiceRequest): Promise<boolean> {
         return this._messenger.sendRequest(runService, HOST_EXTENSION, params);
+    }
+
+    listThreads(): Promise<ThreadSummary[]> {
+        return this._messenger.sendRequest(listThreads, HOST_EXTENSION);
+    }
+
+    switchThread(params: SwitchThreadRequest): Promise<void> {
+        return this._messenger.sendRequest(switchThread, HOST_EXTENSION, params);
+    }
+
+    deleteThread(params: DeleteThreadRequest): Promise<void> {
+        return this._messenger.sendRequest(deleteThread, HOST_EXTENSION, params);
     }
 }

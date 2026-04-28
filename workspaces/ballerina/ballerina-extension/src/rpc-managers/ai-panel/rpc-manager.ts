@@ -421,7 +421,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
     async getAffectedPackages(): Promise<string[]> {
         // Get project root path and thread ID
         const projectRootPath = resolveProjectRootPath();
-        const threadId = 'default';
+        const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
 
         // Get the LATEST under_review generation (not the first one)
         const thread = chatStateStorage.getOrCreateThread(projectRootPath, threadId);
@@ -452,7 +452,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         try {
             // Get project root path and thread ID
             const projectRootPath = resolveProjectRootPath();
-            const threadId = 'default';
+            const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
 
             // Get ALL under_review generations
             const thread = chatStateStorage.getOrCreateThread(projectRootPath, threadId);
@@ -499,7 +499,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
         try {
             // Get project root path and thread ID
             const projectRootPath = resolveProjectRootPath();
-            const threadId = 'default';
+            const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
 
             // Get ALL under_review generations
             const thread = chatStateStorage.getOrCreateThread(projectRootPath, threadId);
@@ -600,7 +600,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
     async restoreCheckpoint(params: RestoreCheckpointRequest): Promise<void> {
         // Get project root path and thread identifiers
         const projectRootPath = resolveProjectRootPath();
-        const threadId = 'default';
+        const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
 
         // Find the checkpoint
         const found = chatStateStorage.findCheckpoint(projectRootPath, threadId, params.checkpointId);
@@ -633,19 +633,31 @@ export class AiPanelRpcManager implements AIPanelAPI {
     }
 
     async clearChat(): Promise<void> {
-        // Get project root path
         const projectRootPath = resolveProjectRootPath();
+        // Create a new thread — preserves all existing history
+        const newThreadId = chatStateStorage.createNewThread(projectRootPath);
+        clearCompactionDisabledWarning(projectRootPath, newThreadId);
+        console.log(`[RPC] New chat started (thread: ${newThreadId}) for: ${projectRootPath}`);
+    }
 
-        // Clear the workspace (all threads)
-        await chatStateStorage.clearWorkspace(projectRootPath);
-        clearCompactionDisabledWarning(projectRootPath, 'default');
+    async listThreads(): Promise<import('@wso2/ballerina-core').ThreadSummary[]> {
+        const projectRootPath = resolveProjectRootPath();
+        return chatStateStorage.listThreadsSummary(projectRootPath);
+    }
 
-        console.log(`[RPC] Cleared chat for projectRootPath: ${projectRootPath}`);
+    async switchThread(params: import('@wso2/ballerina-core').SwitchThreadRequest): Promise<void> {
+        const projectRootPath = resolveProjectRootPath();
+        chatStateStorage.switchToThread(projectRootPath, params.threadId);
+    }
+
+    async deleteThread(params: import('@wso2/ballerina-core').DeleteThreadRequest): Promise<void> {
+        const projectRootPath = resolveProjectRootPath();
+        await chatStateStorage.deleteThread(projectRootPath, params.threadId);
     }
 
     async updateChatMessage(params: UpdateChatMessageRequest): Promise<void> {
         const projectRootPath = resolveProjectRootPath();
-        const threadId = 'default';
+        const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
 
         // The messageId is actually a generation ID
         // This is called when streaming completes to save the final UI-formatted response
@@ -666,7 +678,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
 
     async getChatMessages(): Promise<UIChatMessage[]> {
         const projectRootPath = resolveProjectRootPath();
-        const threadId = 'default';
+        const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
 
         // Get all generations from chat storage
         const generations = chatStateStorage.getGenerations(projectRootPath, threadId);
@@ -697,7 +709,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
 
     async getCheckpoints(): Promise<CheckpointInfo[]> {
         const projectRootPath = resolveProjectRootPath();
-        const threadId = 'default';
+        const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
 
         // Get checkpoints from ChatStateStorage
         const checkpoints = chatStateStorage.getCheckpoints(projectRootPath, threadId);
@@ -713,7 +725,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
 
     async getActiveTempDir(): Promise<string> {
         const projectRootPath = resolveProjectRootPath();
-        const threadId = 'default';
+        const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
 
         // Always get tempProjectPath from active generation in chatStateStorage
         const pendingReview = chatStateStorage.getPendingReviewGeneration(projectRootPath, threadId);
@@ -781,7 +793,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
 
         const context = StateMachine.context();
         const workspaceId = context.workspacePath || context.projectPath;
-        const threadId = 'default';
+        const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
         const pendingReview = chatStateStorage.getPendingReviewGeneration(workspaceId, threadId);
         const tempProjectPath = pendingReview?.reviewState.tempProjectPath;
 
