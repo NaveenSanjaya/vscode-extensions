@@ -55,6 +55,9 @@ import {
     RunningServiceInfo,
     StopRunningServiceRequest,
     RunServiceRequest,
+    ThreadSummary,
+    SwitchThreadRequest,
+    DeleteThreadRequest,
 } from "@wso2/ballerina-core";
 import * as os from "os";
 import * as fs from 'fs';
@@ -423,7 +426,7 @@ export class AiPanelRpcManager implements AIPanelAPI {
 
     async getAffectedPackages(): Promise<string[]> {
         const projectRootPath = resolveProjectRootPath();
-        const threadId = chatStateStorage.getActiveThread(resolveProjectRootPath())?.id ?? 'default';
+        const threadId = chatStateStorage.getActiveThread(projectRootPath)?.id ?? 'default';
         const thread = chatStateStorage.getOrCreateThread(projectRootPath, threadId);
         const underReviewGenerations = thread.generations.filter(
             g => g.reviewState.status === 'under_review'
@@ -647,17 +650,17 @@ User reverted the last made changes. The files have been restored to the state b
         console.log(`[RPC] New chat started (thread: ${newThreadId}) for: ${projectRootPath}`);
     }
 
-    async listThreads(): Promise<import('@wso2/ballerina-core').ThreadSummary[]> {
+    async listThreads(): Promise<ThreadSummary[]> {
         const projectRootPath = resolveProjectRootPath();
         return chatStateStorage.listThreadsSummary(projectRootPath);
     }
 
-    async switchThread(params: import('@wso2/ballerina-core').SwitchThreadRequest): Promise<void> {
+    async switchThread(params: SwitchThreadRequest): Promise<void> {
         const projectRootPath = resolveProjectRootPath();
         chatStateStorage.switchToThread(projectRootPath, params.threadId);
     }
 
-    async deleteThread(params: import('@wso2/ballerina-core').DeleteThreadRequest): Promise<void> {
+    async deleteThread(params: DeleteThreadRequest): Promise<void> {
         const projectRootPath = resolveProjectRootPath();
         await chatStateStorage.deleteThread(projectRootPath, params.threadId);
     }

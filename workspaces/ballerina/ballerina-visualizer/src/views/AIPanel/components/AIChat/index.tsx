@@ -1537,9 +1537,16 @@ const AIChat: React.FC = () => {
 
     async function handleDeleteThread(threadId: string): Promise<void> {
         await rpcClient.getAiPanelRpcClient().deleteThread({ threadId });
-        // If we deleted the active thread, messages will have changed
-        const msgs = await rpcClient.getAiPanelRpcClient().getChatMessages();
+
+        // Reload messages and checkpoints for the (possibly new) active thread in parallel
+        const [msgs, checkpoints] = await Promise.all([
+            rpcClient.getAiPanelRpcClient().getChatMessages(),
+            rpcClient.getAiPanelRpcClient().getCheckpoints(),
+        ]);
         setMessages(msgs.map(m => ({ role: m.role === "user" ? "User" : "Copilot", content: m.content, type: "text", checkpointId: m.checkpointId, messageId: m.messageId })));
+        setAvailableCheckpointIds(new Set(checkpoints.map(cp => cp.id)));
+        setHasActiveReview(false);
+        setRestoringCheckpointId(null);
         loadThreads();
     }
 

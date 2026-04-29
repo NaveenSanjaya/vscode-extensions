@@ -26,6 +26,7 @@ import {
     Checkpoint,
 } from '@wso2/ballerina-core/lib/state-machine-types';
 import { approvalManager } from '../../features/ai/state/ApprovalManager';
+import { cleanupTempProject } from '../../features/ai/utils/project/temp-project';
 import { generateId } from './idGenerators';
 import {
     CopilotPersistenceStore,
@@ -427,7 +428,7 @@ export class ChatStateStorage {
 
                     // Cleanup temp directory
                     if (!process.env.AI_TEST_ENV) {
-                        const { cleanupTempProject } = require('../../features/ai/utils/project/temp-project');
+                        
                         try {
                             await cleanupTempProject(pendingReview.reviewState.tempProjectPath);
                         } catch (error) {
@@ -578,7 +579,7 @@ export class ChatStateStorage {
         // Cleanup temp project if needed
         const pendingReview = this.getPendingReviewGeneration(projectRootPath, threadId);
         if (pendingReview?.reviewState.tempProjectPath && !process.env.AI_TEST_ENV) {
-            const { cleanupTempProject } = require('../../features/ai/utils/project/temp-project');
+            
             try { await cleanupTempProject(pendingReview.reviewState.tempProjectPath); } catch { /* ignore */ }
         }
 

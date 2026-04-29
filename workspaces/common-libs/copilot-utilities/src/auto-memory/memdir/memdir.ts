@@ -154,13 +154,33 @@ export function buildMemoryLines(globalDir: string, workspaceDir: string): strin
     ];
 }
 
+// ---------------------------------------------------------------------------
+// Per-workspace prompt cache (5-second TTL)
+// Eliminates repeated readFileSync calls during multi-turn conversations.
+// The short TTL ensures newly saved memories surface within one turn cycle.
+// ---------------------------------------------------------------------------
+
+interface PromptCacheEntry { prompt: string; expiresAt: number; }
+const promptCache = new Map<string, PromptCacheEntry>();
+const PROMPT_CACHE_TTL_MS = 5_000;
+
+/** Invalidate the cached prompt for a workspace hash (e.g. after memory files change). */
+export function invalidateMemoryPromptCache(workspaceHash: string): void {
+    promptCache.delete(workspaceHash);
+    promptCache.delete('global');
+}
+
 /**
  * Loads and builds the full memory prompt section for injection into the
  * agent system prompt at session start.
- * Caller is responsible for ensuring memory directories exist before calling
- * (use ensureMemoryDirsExist once at init time, not on every call).
+ * Results are cached for 5 seconds per workspace hash to avoid a readFileSync
+ * pair on every turn. Caller is responsible for ensuring memory directories
+ * exist before calling (use ensureMemoryDirsExist once at init time).
  */
 export function loadMemoryPrompt(workspaceHash: string): string {
+    const cached = promptCache.get(workspaceHash);
+    if (cached && Date.now() < cached.expiresAt) { return cached.prompt; }
+
     const globalDir = getGlobalMemoryDir();
     const workspaceDir = getMemoryDir(workspaceHash);
 
@@ -194,5 +214,7 @@ export function loadMemoryPrompt(workspaceHash: string): string {
         );
     }
 
-    return lines.join('\n');
+    const prompt = lines.join('\n');
+    promptCache.set(workspaceHash, { prompt, expiresAt: Date.now() + PROMPT_CACHE_TTL_MS });
+    return prompt;
 }

@@ -43,6 +43,7 @@ export {
     ensureMemoryDirsExist,
     buildMemoryLines,
     loadMemoryPrompt,
+    invalidateMemoryPromptCache,
 } from './memdir/memdir';
 
 // Extraction prompt builder
