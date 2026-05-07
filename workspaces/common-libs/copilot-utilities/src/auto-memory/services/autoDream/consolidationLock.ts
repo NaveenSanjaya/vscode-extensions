@@ -88,10 +88,30 @@ export function tryAcquireLock(lockPath: string): number | null {
         const verify = readFileSync(lockPath, 'utf-8');
         if (parseInt(verify.trim(), 10) !== process.pid) { return null; }
     } catch {
+        // Read-back failed despite successful write — clean up so we don't leave a
+        // zombie PID that would block dreams for HOLDER_STALE_MS.
+        try { unlinkSync(lockPath); } catch { /* best-effort */ }
         return null;
     }
 
     return priorMtime ?? 0;
+}
+
+/**
+ * Releases the lock on dream success.
+ *
+ * Clears the PID body so a future `tryAcquireLock` does not treat this
+ * extension host as a live holder, while leaving the mtime as the dream's
+ * completion timestamp (= lastConsolidatedAt). Without this, subsequent
+ * dreams from the same extension host would be blocked for up to
+ * HOLDER_STALE_MS minutes because the PID stays alive between dreams.
+ */
+export function releaseLock(lockPath: string): void {
+    try {
+        writeFileSync(lockPath, '', 'utf-8');
+    } catch (e: unknown) {
+        console.error('[consolidationLock] release failed:', (e as Error).message);
+    }
 }
 
 /**

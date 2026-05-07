@@ -26,21 +26,23 @@ import {
     getLockPath,
     readLastConsolidatedAt,
     tryAcquireLock,
+    releaseLock,
     rollbackLock,
     countGenerationsSince,
     buildConsolidationPrompt,
+    invalidateMemoryPromptCache,
 } from '@wso2/copilot-utilities/auto-memory';
 import { computeWorkspaceHash } from '@wso2/copilot-utilities/chat-persistence';
-import { getAnthropicClient, ANTHROPIC_SONNET_4 } from '../utils/ai-client';
+import { getAnthropicClient, ANTHROPIC_HAIKU } from '../utils/ai-client';
 import { createMemoryTools } from './memoryTools';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const MIN_HOURS_BETWEEN_DREAMS   = 24;
-const MIN_GENERATIONS_SINCE_LAST = 10;
-const SCAN_THROTTLE_MS           = 10 * 60 * 1_000; // 10 minutes
+const MIN_HOURS_BETWEEN_DREAMS   = 0;
+const MIN_GENERATIONS_SINCE_LAST = 1;
+const SCAN_THROTTLE_MS           = 0; // 10 minutes
 
 /** ~/.ballerina/copilot/workspaces/ */
 const WORKSPACES_BASE_DIR = join(homedir(), '.ballerina', 'copilot', 'workspaces');
@@ -157,7 +159,7 @@ async function runDream(
 
     ctx.onDreamStart?.();
     try {
-        const model   = await getAnthropicClient(ANTHROPIC_SONNET_4);
+        const model   = await getAnthropicClient(ANTHROPIC_HAIKU);
         const tools   = createMemoryTools(globalDir, workspaceDir);
         const system  = buildMemoryLines(globalDir, workspaceDir).join('\n');
         const prompt  = buildConsolidationPrompt(globalDir, workspaceDir, {
@@ -174,6 +176,16 @@ async function runDream(
             tools,
             stopWhen: [stepCountIs(30)],
         });
+
+        // Clear the PID body so future dreams from this same extension host
+        // are not blocked by the live-holder check in tryAcquireLock. The
+        // mtime advances to "now" — which is the completion time we want
+        // recorded as lastConsolidatedAt.
+        releaseLock(workspaceLockPath);
+        if (hasGlobalLock) { releaseLock(globalLockPath); }
+
+        // Bust the 5-second TTL cache so the next turn picks up the consolidated memories.
+        invalidateMemoryPromptCache(workspaceHash);
 
         console.log('[autoDream] consolidation complete');
         ctx.onDreamComplete?.();

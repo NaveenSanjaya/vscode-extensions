@@ -59,7 +59,7 @@ export function scanMemoryFiles(memoryDir: string): MemoryHeader[] {
 }
 
 function parseFrontmatter(content: string): { description: string | null; type: string | undefined } {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!match) { return { description: null, type: undefined }; }
 
     const frontmatter = match[1];

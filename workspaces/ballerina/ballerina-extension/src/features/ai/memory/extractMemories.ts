@@ -94,11 +94,7 @@ export function initExtractMemories(): void {
         const workspaceFiles = scanMemoryFiles(workspaceDir);
         const manifest       = formatMemoryManifest(globalFiles, workspaceFiles);
 
-        // TODO(v2): pass recent chat history (last N turns) for better cross-turn context.
-        // Currently the extraction agent only sees the current turn. This means if the user
-        // provided background context in an earlier turn (e.g. "I've been using WSO2 ESB for
-        // 8 years") and that turn was already extracted, it won't be re-processed here.
-        // The per-turn extraction is sufficient for most cases since memories are cumulative.
+        // Currently the extraction agent only sees the current turn.
         const newMessageCount = 2;
 
         const extractionPrompt = buildExtractPrompt({

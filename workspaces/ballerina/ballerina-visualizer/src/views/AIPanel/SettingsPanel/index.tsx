@@ -155,12 +155,50 @@ const CopilotButton = styled.button<{ authorized: boolean }>`
     `}
 `;
 
+const ActionButton = styled.button`
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-family: var(--vscode-font-family);
+    transition: all 0.15s ease;
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    background: var(--vscode-button-secondaryBackground, transparent);
+    border: 1px solid var(--vscode-button-secondaryBackground, var(--vscode-panel-border));
+    &:hover { opacity: 0.85; }
+`;
+
+const ConfirmRow = styled.div`
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+`;
+
+const CancelLink = styled.button`
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    font-size: 12px;
+    font-family: var(--vscode-font-family);
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    &:hover { color: var(--vscode-foreground); }
+`;
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const SettingsPanel = (props: { onClose: () => void }) => {
     const { rpcClient } = useRpcContext();
 
     const [copilotAuthorized, setCopilotAuthorized] = React.useState(false);
+    const [clearing, setClearing] = React.useState<'workspace' | 'all' | null>(null);
 
     useEffect(() => {
         isCopilotAuthorized().then(setCopilotAuthorized);
@@ -177,6 +215,15 @@ export const SettingsPanel = (props: { onClose: () => void }) => {
 
     const isCopilotAuthorized = async () => {
         return await rpcClient.getAiPanelRpcClient().isCopilotSignedIn();
+    };
+
+    const handleViewMemories = (scope: 'global' | 'workspace') => {
+        rpcClient.getAiPanelRpcClient().openMemoryFiles({ scope });
+    };
+
+    const handleClearConfirm = async (scope: 'workspace' | 'all') => {
+        await rpcClient.getAiPanelRpcClient().clearMemory({ scope });
+        setClearing(null);
     };
 
     return (
@@ -216,6 +263,54 @@ export const SettingsPanel = (props: { onClose: () => void }) => {
                             </SettingDescription>
                         </SettingInfo>
                         <Codicon name="database" sx={{ fontSize: "16px", color: "var(--vscode-descriptionForeground)", flexShrink: 0 }} />
+                    </SettingRow>
+                    <SettingRow>
+                        <SettingInfo>
+                            <SettingLabel>Global memories</SettingLabel>
+                            <SettingDescription>Open the global memory index in the editor</SettingDescription>
+                        </SettingInfo>
+                        <ActionButton onClick={() => handleViewMemories('global')}>
+                            <span className="codicon codicon-go-to-file" style={{ fontSize: 12 }} />
+                            Open
+                        </ActionButton>
+                    </SettingRow>
+                    <SettingRow>
+                        <SettingInfo>
+                            <SettingLabel>Workspace memories</SettingLabel>
+                            <SettingDescription>Open the workspace memory index in the editor</SettingDescription>
+                        </SettingInfo>
+                        <ActionButton onClick={() => handleViewMemories('workspace')}>
+                            <span className="codicon codicon-go-to-file" style={{ fontSize: 12 }} />
+                            Open
+                        </ActionButton>
+                    </SettingRow>
+                    <SettingRow>
+                        <SettingInfo>
+                            <SettingLabel>Clear workspace memories</SettingLabel>
+                            <SettingDescription>Remove all memory files for this project</SettingDescription>
+                        </SettingInfo>
+                        {clearing === 'workspace' ? (
+                            <ConfirmRow>
+                                <SignOutButton onClick={() => handleClearConfirm('workspace')}>Confirm</SignOutButton>
+                                <CancelLink onClick={() => setClearing(null)}>Cancel</CancelLink>
+                            </ConfirmRow>
+                        ) : (
+                            <SignOutButton onClick={() => setClearing('workspace')}>Clear</SignOutButton>
+                        )}
+                    </SettingRow>
+                    <SettingRow>
+                        <SettingInfo>
+                            <SettingLabel>Clear all memories</SettingLabel>
+                            <SettingDescription>Remove global and workspace memory files</SettingDescription>
+                        </SettingInfo>
+                        {clearing === 'all' ? (
+                            <ConfirmRow>
+                                <SignOutButton onClick={() => handleClearConfirm('all')}>Confirm</SignOutButton>
+                                <CancelLink onClick={() => setClearing(null)}>Cancel</CancelLink>
+                            </ConfirmRow>
+                        ) : (
+                            <SignOutButton onClick={() => setClearing('all')}>Clear</SignOutButton>
+                        )}
                     </SettingRow>
                 </Section>
 

@@ -60,8 +60,15 @@ export function truncateEntrypointContent(raw: string): EntrypointTruncation {
         : trimmed;
 
     if (Buffer.byteLength(truncated, 'utf-8') > MAX_ENTRYPOINT_BYTES) {
-        const cutAt = truncated.lastIndexOf('\n', MAX_ENTRYPOINT_BYTES);
-        truncated = truncated.slice(0, cutAt > 0 ? cutAt : MAX_ENTRYPOINT_BYTES);
+        // Slice at the byte limit, then strip any trailing U+FFFD replacement chars
+        // that Buffer.toString emits for incomplete multibyte sequences at the boundary.
+        // Then walk back to the last newline so we never cut mid-line.
+        const safeStr = Buffer.from(truncated, 'utf-8')
+            .subarray(0, MAX_ENTRYPOINT_BYTES)
+            .toString('utf-8')
+            .replace(/�+$/, '');
+        const cutAt = safeStr.lastIndexOf('\n');
+        truncated = cutAt > 0 ? safeStr.slice(0, cutAt) : safeStr;
     }
 
     const reason =
@@ -112,7 +119,7 @@ export function buildMemoryLines(globalDir: string, workspaceDir: string): strin
         'Saving a memory is a two-step process:',
         '',
         `**Step 1** — write the memory to its own file ` +
-        `(e.g., \`user_expertise.md\`, \`integration_shopify.md\`, \`pattern_error_handling.md\`) ` +
+        `(e.g., \`user_expertise.md\`, \`integration_shopify.md\`, \`codingstyle_error_handling.md\`) ` +
         `using this frontmatter format:`,
         '',
         ...MEMORY_FRONTMATTER_EXAMPLE,
@@ -121,8 +128,8 @@ export function buildMemoryLines(globalDir: string, workspaceDir: string): strin
         `\`${ENTRYPOINT_NAME}\` is an index, not a memory — each entry should be one line ` +
         `under ~150 characters: \`- [Title](file.md) — one-line hook\`.`,
         '',
-        `- Global \`${ENTRYPOINT_NAME}\` lives in: \`${globalDir}\` — for user, pattern, history types`,
-        `- Workspace \`${ENTRYPOINT_NAME}\` lives in: \`${workspaceDir}\` — for integration, project, reference types`,
+        `- Global \`${ENTRYPOINT_NAME}\` lives in: \`${globalDir}\` — for user, history types`,
+        `- Workspace \`${ENTRYPOINT_NAME}\` lives in: \`${workspaceDir}\` — for codingstyle, integration, about, reference types`,
         `- Lines after ${MAX_ENTRYPOINT_LINES} will be truncated — keep the index concise`,
         '- Organize memory semantically by topic, not chronologically',
         '- Update or remove memories that turn out to be wrong or outdated',
@@ -133,11 +140,11 @@ export function buildMemoryLines(globalDir: string, workspaceDir: string): strin
         '# auto memory',
         '',
         'You have a persistent, file-based memory system across **two directories**:',
-        `- **Global memory** (\`${globalDir}\`): user, pattern, history types — applies to ALL projects`,
-        `- **Workspace memory** (\`${workspaceDir}\`): integration, project, reference types — this project only`,
+        `- **Global memory** (\`${globalDir}\`): user, history types — applies to ALL projects`,
+        `- **Workspace memory** (\`${workspaceDir}\`): codingstyle, integration, about, reference types — this project only`,
         '',
-        '**ROUTING RULE**: user/pattern/history types → global directory. ' +
-        'integration/project/reference types → workspace directory.',
+        '**ROUTING RULE**: user/history types → global directory. ' +
+        'codingstyle/integration/about/reference types → workspace directory.',
         '',
         'If the user explicitly asks you to remember something, save it immediately as whichever type fits best. ' +
         'If they ask you to forget something, find and remove the relevant entry.',

@@ -58,6 +58,8 @@ import {
     ThreadSummary,
     SwitchThreadRequest,
     DeleteThreadRequest,
+    ClearMemoryRequest,
+    OpenMemoryRequest,
 } from "@wso2/ballerina-core";
 import * as os from "os";
 import * as fs from 'fs';
@@ -65,6 +67,12 @@ import path from "path";
 import * as vscode from 'vscode';
 import { window, workspace } from 'vscode';
 import { LOGIN_REQUIRED_WARNING, SIGN_IN_BI_COPILOT } from '../../features/ai/constants';
+import {
+    getGlobalMemoryDir,
+    getMemoryDir,
+    invalidateMemoryPromptCache,
+} from '@wso2/copilot-utilities/auto-memory';
+import { computeWorkspaceHash } from '@wso2/copilot-utilities/chat-persistence';
 
 import { isNumber } from "lodash";
 import { getServiceDeclarationNames } from "../../../src/features/ai/documentation/utils";
@@ -663,6 +671,35 @@ User reverted the last made changes. The files have been restored to the state b
     async deleteThread(params: DeleteThreadRequest): Promise<void> {
         const projectRootPath = resolveProjectRootPath();
         await chatStateStorage.deleteThread(projectRootPath, params.threadId);
+    }
+
+    async clearMemory(params: ClearMemoryRequest): Promise<void> {
+        const projectRootPath = resolveProjectRootPath();
+        const workspaceHash = computeWorkspaceHash(projectRootPath);
+        const wipeDir = (dir: string) => {
+            try {
+                fs.readdirSync(dir)
+                    .filter(f => f.endsWith('.md'))
+                    .forEach(f => fs.unlinkSync(path.join(dir, f)));
+            } catch { /* dir may not exist yet */ }
+        };
+        if (params.scope === 'all') { wipeDir(getGlobalMemoryDir()); }
+        wipeDir(getMemoryDir(workspaceHash));
+        invalidateMemoryPromptCache(workspaceHash);
+    }
+
+    async openMemoryFiles(params: OpenMemoryRequest): Promise<void> {
+        const projectRootPath = resolveProjectRootPath();
+        const workspaceHash = computeWorkspaceHash(projectRootPath);
+        const dir = params.scope === 'global'
+            ? getGlobalMemoryDir()
+            : getMemoryDir(workspaceHash);
+        const indexPath = path.join(dir, 'MEMORY.md');
+        try {
+            await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(indexPath));
+        } catch {
+            vscode.window.showInformationMessage('No memories saved yet for this scope.');
+        }
     }
 
     async updateChatMessage(params: UpdateChatMessageRequest): Promise<void> {

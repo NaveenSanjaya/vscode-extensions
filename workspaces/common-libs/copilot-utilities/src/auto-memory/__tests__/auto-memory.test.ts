@@ -22,7 +22,7 @@ import * as os from 'os';
 
 import { truncateEntrypointContent, MAX_ENTRYPOINT_LINES } from '../memdir/memdir';
 import { scanMemoryFiles, formatMemoryManifest, MemoryHeader } from '../memdir/memoryScan';
-import { tryAcquireLock, rollbackLock, readLastConsolidatedAt, getLockPath, countGenerationsSince } from '../services/autoDream/consolidationLock';
+import { tryAcquireLock, rollbackLock, releaseLock, readLastConsolidatedAt, getLockPath, countGenerationsSince } from '../services/autoDream/consolidationLock';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -133,10 +133,10 @@ describe('scanMemoryFiles', () => {
     });
 
     it('parses frontmatter type and description', () => {
-        writeMemoryFile(tmpDir, 'pattern_retry.md', 'pattern', 'retry 3× → dead-letter');
+        writeMemoryFile(tmpDir, 'codingstyle_retry.md', 'codingstyle', 'retry 3× → dead-letter');
         const results = scanMemoryFiles(tmpDir);
         assert.equal(results.length, 1);
-        assert.equal(results[0].type, 'pattern');
+        assert.equal(results[0].type, 'codingstyle');
         assert.equal(results[0].description, 'retry 3× → dead-letter');
     });
 
@@ -255,6 +255,44 @@ describe('rollbackLock', () => {
         const restoredMtime = fs.statSync(lockPath).mtimeMs;
         // Allow 2-second tolerance for filesystem precision
         assert.ok(Math.abs(restoredMtime - priorMs) < 2_000);
+    });
+});
+
+describe('releaseLock', () => {
+    let tmpDir: string;
+    let lockPath: string;
+
+    beforeEach(() => {
+        tmpDir = makeTempDir();
+        lockPath = getLockPath(tmpDir);
+    });
+    afterEach(() => removeTempDir(tmpDir));
+
+    it('clears the PID body while keeping the lock file', () => {
+        fs.writeFileSync(lockPath, String(process.pid), 'utf-8');
+        releaseLock(lockPath);
+        assert.ok(fs.existsSync(lockPath), 'lock file should still exist');
+        const body = fs.readFileSync(lockPath, 'utf-8');
+        assert.equal(body, '', 'PID body should be empty after release');
+    });
+
+    it('advances mtime so readLastConsolidatedAt reflects completion time', () => {
+        const beforeMs = Date.now();
+        // Create lock with an old mtime
+        fs.writeFileSync(lockPath, String(process.pid), 'utf-8');
+        const oldTime = (beforeMs - 60_000) / 1000;
+        fs.utimesSync(lockPath, oldTime, oldTime);
+        releaseLock(lockPath);
+        const mtime = readLastConsolidatedAt(lockPath);
+        assert.ok(mtime >= beforeMs - 1_000, `mtime should be recent, got ${mtime}`);
+    });
+
+    it('allows tryAcquireLock to re-acquire after release (empty body = no live holder)', () => {
+        fs.writeFileSync(lockPath, String(process.pid), 'utf-8');
+        releaseLock(lockPath);
+        // After release, body is empty — isProcessRunning('') is false, so lock is reclaimable
+        const result = tryAcquireLock(lockPath);
+        assert.ok(result !== null, 'should be able to re-acquire after release');
     });
 });
 

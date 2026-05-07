@@ -259,15 +259,13 @@ export function SessionHistoryDropdown({
                                     <ActiveDot isActive={thread.isActive} />
                                     <SessionName title={thread.name}>{thread.name}</SessionName>
                                     <SessionTime>{formatRelativeTime(thread.updatedAt)}</SessionTime>
-                                    {!thread.isActive && (
-                                        <DeleteBtn
-                                            className="delete-btn"
-                                            onClick={e => handleDelete(e, thread.id)}
-                                            title="Delete session"
-                                        >
-                                            <Codicon name="trash" sx={{ fontSize: "12px" }} />
-                                        </DeleteBtn>
-                                    )}
+                                    <DeleteBtn
+                                        className="delete-btn"
+                                        onClick={e => handleDelete(e, thread.id)}
+                                        title="Delete session"
+                                    >
+                                        <Codicon name="trash" sx={{ fontSize: "12px" }} />
+                                    </DeleteBtn>
                                 </SessionItem>
                             ))}
                         </div>
