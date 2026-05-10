@@ -355,6 +355,7 @@ export interface FormProps {
     derivedFields?: FieldDerivation[]; // Configuration for auto-deriving field values from other fields
     updateImports?: (key: string, imports: Imports) => void;
     defaultExpandAdvanced?: boolean;
+    onFieldModeChange?: (fieldKey: string, mode: InputMode) => void;
 }
 
 export const Form = forwardRef((props: FormProps, _ref) => {
@@ -400,6 +401,7 @@ export const Form = forwardRef((props: FormProps, _ref) => {
         openFormTypeEditor,
         derivedFields = [],
         updateImports,
+        onFieldModeChange,
     } = props;
 
     const { rpcClient } = useRpcContext();
@@ -606,9 +608,9 @@ export const Form = forwardRef((props: FormProps, _ref) => {
         }
     }
 
-    const handleFormValidation = async (formData?: FormValues, forceValidation?: boolean): Promise<boolean> => {
+    const handleFormValidation = async (formData?: FormValues): Promise<boolean> => {
         const data = formData ?? getValues();
-        if (!onFormValidation || (!forceValidation && !canRunExternalFormValidation(data))) {
+        if (!onFormValidation || !canRunExternalFormValidation(data)) {
             return true;
         }
 
@@ -1114,6 +1116,7 @@ export const Form = forwardRef((props: FormProps, _ref) => {
                                         ((open: boolean, newType?: string) => openFormTypeEditor(open, newType, updatedField))
                                     }
                                     updateImports={updateImports}
+                                    onFieldModeChange={onFieldModeChange}
                                 />
                                 {updatedField.key === "scope" && scopeFieldAddon}
                             </S.Row>
@@ -1208,6 +1211,7 @@ export const Form = forwardRef((props: FormProps, _ref) => {
                                             onIdentifierEditingStateChange={handleIdentifierEditingStateChange}
                                             handleOnTypeChange={handleOnTypeChange}
                                             onBlur={handleOnBlur}
+                                            onFieldModeChange={onFieldModeChange}
                                         />
                                     </S.Row>
                                 );
@@ -1249,7 +1253,8 @@ export const Form = forwardRef((props: FormProps, _ref) => {
                                     handleOnTypeChange={handleOnTypeChange}
                                     onBlur={handleOnBlur}
                                     handleFormValidation={handleFormValidation}
-                                    />
+                                    onFieldModeChange={onFieldModeChange}
+                                />
                             </S.Row>
                         );
                     })}
@@ -1265,6 +1270,7 @@ export const Form = forwardRef((props: FormProps, _ref) => {
                             onIdentifierEditingStateChange={handleIdentifierEditingStateChange}
                             onBlur={handleOnBlur}
                             handleFormValidation={handleFormValidation}
+                            onFieldModeChange={onFieldModeChange}
                         />
                     )}
                     {typeField && !isInferredReturnType && (
@@ -1281,6 +1287,7 @@ export const Form = forwardRef((props: FormProps, _ref) => {
                             handleNewTypeSelected={handleNewTypeSelected}
                             onBlur={handleOnBlur}
                             handleFormValidation={handleFormValidation}
+                            onFieldModeChange={onFieldModeChange}
                         />
                     )}
                     {targetTypeField && !targetTypeField.advanced && (
@@ -1294,6 +1301,7 @@ export const Form = forwardRef((props: FormProps, _ref) => {
                                 handleOnTypeChange={handleOnTypeChange}
                                 onBlur={handleOnBlur}
                                 handleFormValidation={handleFormValidation}
+                                onFieldModeChange={onFieldModeChange}
                             />
                             {typeField && (
                                 <TypeHelperText

@@ -2211,17 +2211,11 @@ export class BiDiagramRpcManager implements BIDiagramAPI {
         try {
             // Get workspace structure
             const workspaceStructure = await this.getProjectStructure();
-            if (!workspaceStructure) {
+            if (!workspaceStructure || !workspaceStructure.workspacePath) {
                 return { isLoggedIn: false, hasAnyComponent: false, hasLocalChanges: false };
             }
 
-            // For standalone integrations workspacePath is undefined; fall back to the single project's path
-            const pathForRepoRoot = workspaceStructure.workspacePath ?? workspaceStructure.projects?.[0]?.projectPath;
-            if (!pathForRepoRoot) {
-                return { isLoggedIn: false, hasAnyComponent: false, hasLocalChanges: false };
-            }
-
-            const repoRoot = getRepoRoot(pathForRepoRoot);
+            const repoRoot = getRepoRoot(workspaceStructure.workspacePath);
             if (!repoRoot) {
                 return { isLoggedIn: false, hasAnyComponent: false, hasLocalChanges: false };
             }

@@ -17,7 +17,6 @@
  */
 
 import React, { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { EditableTitle } from "../../../components/EditableTitle";
 import {
     ProjectStructure,
@@ -415,7 +414,6 @@ interface DeploymentOptionsProps {
     handleDeploy: () => Promise<void>;
     goToDevant: () => void;
     hasDeployableIntegration: boolean;
-    projectPath: string;
 }
 
 function DeploymentOptions({
@@ -423,8 +421,7 @@ function DeploymentOptions({
     handleJarBuild,
     handleDeploy,
     goToDevant,
-    hasDeployableIntegration,
-    projectPath
+    hasDeployableIntegration
 }: DeploymentOptionsProps) {
     const [expandedOptions, setExpandedOptions] = useState<Set<string>>(new Set(['cloud', 'devant']));
     const { rpcClient } = useRpcContext();
@@ -442,22 +439,14 @@ function DeploymentOptions({
         });
     };
 
-    const { data: devantMetadata, isLoading: isDevantLoading } = useQuery({
-        queryKey: ["project-devant-metadata", projectPath],
-        queryFn: () => rpcClient.getBIDiagramRpcClient().getWorkspaceDevantMetadata(),
-        enabled: platformExtState.isExtInstalled,
-        refetchInterval: 5000,
-    });
-    const currentProjectMeta = devantMetadata?.projectsMetadata?.find(p => p.projectPath === projectPath);
-    const isDeployed = devantMetadata?.isLoggedIn
-        ? (currentProjectMeta?.hasComponent ?? false)
-        : false;
+    const isDeployed = platformExtState?.isLoggedIn ? !!platformExtState?.selectedComponent : platformExtState?.hasPossibleComponent;
+
     return (
         <>
             <div>
                 <Title variant="h3">Deployment Options</Title>
 
-                {platformExtState.isExtInstalled && !isDevantLoading && (
+                {platformExtState.isExtInstalled && (
                     <DeploymentOption
                         title={
                             isDeployed ? (
@@ -491,7 +480,7 @@ function DeploymentOptions({
                         learnMoreLink={"https://wso2.com/devant/docs/"}
                         hasDeployableIntegration={hasDeployableIntegration}
                         secondaryAction={
-                            isDeployed && currentProjectMeta?.hasLocalChanges
+                            isDeployed && platformExtState?.hasLocalChanges
                                 ? {
                                     description: "To redeploy in WSO2 Cloud, please commit and push your changes.",
                                     buttonText: "Open Source Control",
@@ -1160,7 +1149,6 @@ export function PackageOverview(props: PackageOverviewProps) {
                                         handleDeploy={handleDeploy}
                                         goToDevant={goToDevant}
                                         hasDeployableIntegration={deployableIntegrationTypes.length > 0}
-                                        projectPath={projectPath}
                                     />
                                     <Divider sx={{ margin: "16px 0" }} />
                                     <IntegrationControlPlane enabled={enabled} handleICP={handleICP} />

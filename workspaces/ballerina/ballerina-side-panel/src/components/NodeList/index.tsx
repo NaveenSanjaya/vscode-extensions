@@ -397,9 +397,6 @@ export function NodeList(props: NodeListProps) {
     const [isSearching, setIsSearching] = useState(false);
     const [expandedMoreSections, setExpandedMoreSections] = useState<Record<string, boolean>>({});
     const [expandedCategories, setExpandedCategoriesState] = useState<Record<string, boolean>>({});
-    const [searchCollapsedCategories, setSearchCollapsedCategories] = useState<Record<string, boolean>>({});
-    const [searchCollapsedMoreSections, setSearchCollapsedMoreSections] = useState<Record<string, boolean>>({});
-    const [searchCollapsedConnections, setSearchCollapsedConnections] = useState<Record<string, boolean>>({});
     const { rpcClient } = useRpcContext();
     const [isNPSupported, setIsNPSupported] = useState(false);
 
@@ -447,12 +444,6 @@ export function NodeList(props: NodeListProps) {
         }
     }, [searchText]);
 
-    useEffect(() => {
-        setSearchCollapsedCategories({});
-        setSearchCollapsedMoreSections({});
-        setSearchCollapsedConnections({});
-    }, [searchText]);
-
     const handleSearch = (text: string) => {
         onSearchTextChange(text);
     };
@@ -473,13 +464,6 @@ export function NodeList(props: NodeListProps) {
     }, [categories]);
 
     const toggleMoreSection = (sectionKey: string) => {
-        if (searchText && searchText.length > 0) {
-            setSearchCollapsedMoreSections((prev) => ({
-                ...prev,
-                [sectionKey]: !prev[sectionKey],
-            }));
-            return;
-        }
         setExpandedMoreSections((prev) => ({
             ...prev,
             [sectionKey]: !prev[sectionKey],
@@ -487,13 +471,6 @@ export function NodeList(props: NodeListProps) {
     };
 
     const toggleCategory = (categoryTitle: string) => {
-        if (searchText && searchText.length > 0) {
-            setSearchCollapsedCategories((prev) => ({
-                ...prev,
-                [categoryTitle]: !prev[categoryTitle],
-            }));
-            return;
-        }
         const newExpandedState = {
             ...expandedCategories,
             [categoryTitle]: !expandedCategories[categoryTitle],
@@ -613,9 +590,7 @@ export function NodeList(props: NodeListProps) {
 
                     if (isMoreSubcategory) {
                         const sectionKey = `${parentCategoryTitle}-${subcategory.title}`;
-                        const isExpanded = searchText?.length > 0
-                            ? !searchCollapsedMoreSections[sectionKey]
-                            : expandedMoreSections[sectionKey];
+                        const isExpanded = expandedMoreSections[sectionKey] || searchText?.length > 0;
 
                         return (
                             <S.AdvancedSubcategoryContainer key={subcategory.title + index}>
@@ -664,12 +639,7 @@ export function NodeList(props: NodeListProps) {
                     <GroupList
                         key={category.title + index + "tooltip"}
                         category={category}
-                        expand={searchText?.length > 0 ? !searchCollapsedConnections[category.title] : undefined}
-                        onToggle={(isOpen) => {
-                            if (searchText?.length > 0) {
-                                setSearchCollapsedConnections((prev) => ({ ...prev, [category.title]: !isOpen }));
-                            }
-                        }}
+                        expand={searchText?.length > 0}
                         onSelect={handleAddNode}
                         onImportDevantConn={onImportDevantConn}
                         enableSingleNodeDirectNav={enableSingleNodeDirectNav}
@@ -733,9 +703,7 @@ export function NodeList(props: NodeListProps) {
                         return null;
                     }
 
-                    const isCategoryExpanded = shouldExpandAll
-                        ? !searchCollapsedCategories[group.title]
-                        : expandedCategories[group.title] !== false;
+                    const isCategoryExpanded = shouldExpandAll || expandedCategories[group.title] !== false;
 
                     return (
                         <React.Fragment key={group.title + index}>
